@@ -10,13 +10,20 @@ import threading
 from typing import Optional, List, Dict, Any
 
 from .models import UserRecord, ContactRecord, GroupRecord, OfflineMessageRecord
+from .security import encrypt_password, decrypt_password, is_encrypted
 
 
 class Database:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, secret_key: Optional[str] = None):
         self.db_path = db_path
         self._lock = threading.Lock()
+        try:
+            import config
+            self.secret_key = secret_key or getattr(config, "DB_SECRET_KEY", "msnp_server_default_master_salt_key_2026")
+        except Exception:
+            self.secret_key = secret_key or "msnp_server_default_master_salt_key_2026"
         self.init_db()
+        self._migrate_plain_passwords()
 
     @contextlib.contextmanager
     def _connection(self):
@@ -99,6 +106,24 @@ class Database:
                 
                 conn.commit()
 
+    def _migrate_plain_passwords(self) -> int:
+        """Migrate any existing plaintext passwords in database to encrypted form."""
+        migrated = 0
+        with self._lock:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT email, password FROM users;")
+                rows = cursor.fetchall()
+                for r in rows:
+                    raw_pwd = r["password"]
+                    if raw_pwd and not is_encrypted(raw_pwd):
+                        enc = encrypt_password(raw_pwd, self.secret_key)
+                        cursor.execute("UPDATE users SET password = ? WHERE email = ?;", (enc, r["email"]))
+                        migrated += 1
+                if migrated > 0:
+                    conn.commit()
+        return migrated
+
     # User Management
     def get_user(self, email: str) -> Optional[UserRecord]:
         email = email.strip()
@@ -111,7 +136,7 @@ class Database:
                     return None
                 return UserRecord(
                     email=row["email"],
-                    password=row["password"],
+                    password=decrypt_password(row["password"], self.secret_key),
                     friendly_name=row["friendly_name"],
                     status=row["status"],
                     client_id=row["client_id"],
@@ -127,6 +152,7 @@ class Database:
     def create_user(self, email: str, password: str, friendly_name: Optional[str] = None) -> UserRecord:
         email = email.strip()
         friendly_name = friendly_name.strip() if friendly_name else email.split("@")[0]
+        enc_pwd = encrypt_password(password, self.secret_key)
         now = datetime.datetime.utcnow().isoformat()
         with self._lock:
             with self._connection() as conn:
@@ -136,7 +162,7 @@ class Database:
                     email, password, friendly_name, status, client_id,
                     custom_message, msn_obj, created_at, last_seen
                 ) VALUES (?, ?, ?, 'FLN', '0', '', '', ?, ?);
-                """, (email, password, friendly_name, now, now))
+                """, (email, enc_pwd, friendly_name, now, now))
 
                 # If this is a regular user, automatically add the service bot to user's contacts
                 try:
@@ -214,10 +240,11 @@ class Database:
 
     def update_password(self, email: str, new_password: str) -> bool:
         email = email.strip()
+        enc_pwd = encrypt_password(new_password, self.secret_key)
         with self._lock:
             with self._connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("UPDATE users SET password = ? WHERE email = ?;", (new_password, email))
+                cursor.execute("UPDATE users SET password = ? WHERE email = ?;", (enc_pwd, email))
                 conn.commit()
                 return cursor.rowcount > 0
 
@@ -485,7 +512,7 @@ class Database:
                 return [
                     UserRecord(
                         email=r["email"],
-                        password=r["password"],
+                        password=decrypt_password(r["password"], self.secret_key),
                         friendly_name=r["friendly_name"],
                         status=r["status"],
                         client_id=r["client_id"],
