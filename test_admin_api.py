@@ -77,15 +77,19 @@ class TestAdminAPI(unittest.IsolatedAsyncioTestCase):
             except Exception:
                 pass
 
-    def _request(self, method: str, path: str, data: dict = None):
+    def _request(self, method: str, path: str, data: dict = None, headers: dict = None, use_auth: bool = True):
         url = f"http://127.0.0.1:{self.port}{path}"
-        headers = {}
+        req_headers = {}
+        if use_auth:
+            req_headers["X-Admin-Password"] = "admin123"
+        if headers:
+            req_headers.update(headers)
         body = None
         if data is not None:
             body = json.dumps(data).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            req_headers["Content-Type"] = "application/json"
 
-        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        req = urllib.request.Request(url, data=body, headers=req_headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 resp_body = resp.read().decode("utf-8")
@@ -855,6 +859,95 @@ class TestAdminAPI(unittest.IsolatedAsyncioTestCase):
         # Must return error, NOT RINGING
         self.assertNotIn(b"RINGING", alice_chat_data3)
         self.assertNotIn(b"JOI ", alice_chat_data3)
+
+    async def test_unauthenticated_api_endpoints_are_blocked(self):
+        """Verify that all admin API endpoints return 401 Unauthorized without auth."""
+        # /api/users
+        status, res = await asyncio.to_thread(self._request, "GET", "/api/users", use_auth=False)
+        self.assertEqual(status, 401)
+        self.assertTrue(res.get("auth_required"))
+
+        # /api/status
+        status, res = await asyncio.to_thread(self._request, "GET", "/api/status", use_auth=False)
+        self.assertEqual(status, 401)
+
+        # /api/notify
+        status, res = await asyncio.to_thread(self._request, "POST", "/api/notify", {"target": "all", "message": "Test"}, use_auth=False)
+        self.assertEqual(status, 401)
+
+        # /api/users/ban
+        status, res = await asyncio.to_thread(self._request, "POST", "/api/users/ban", {"email": "alice@msn.local"}, use_auth=False)
+        self.assertEqual(status, 401)
+
+        # /api/users/update_name
+        status, res = await asyncio.to_thread(self._request, "POST", "/api/users/update_name", {"email": "alice@msn.local", "friendly_name": "New"}, use_auth=False)
+        self.assertEqual(status, 401)
+
+    async def test_registration_is_public_without_auth(self):
+        """Verify that registration endpoint (/api/register) remains completely public."""
+        status, res = await asyncio.to_thread(self._request, "POST", "/api/register", {
+            "email": "public_user@msn.local",
+            "password": "mypassword123",
+            "confirm_password": "mypassword123",
+            "friendly_name": "Public User"
+        }, use_auth=False)
+        self.assertEqual(status, 200)
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("email"), "public_user@msn.local")
+
+    async def test_admin_login_and_token_flow(self):
+        """Verify admin login, token check, token-authenticated requests, and logout."""
+        # 1. Login with invalid password -> 401
+        status, res = await asyncio.to_thread(self._request, "POST", "/api/admin/login", {
+            "password": "incorrect_password"
+        }, use_auth=False)
+        self.assertEqual(status, 401)
+        self.assertIn("Неверный пароль", res.get("error", ""))
+
+        # 2. Login with valid password -> 200 + token
+        status, res = await asyncio.to_thread(self._request, "POST", "/api/admin/login", {
+            "password": "admin123"
+        }, use_auth=False)
+        self.assertEqual(status, 200)
+        self.assertTrue(res.get("success"))
+        token = res.get("token")
+        self.assertTrue(bool(token))
+
+        # 3. Check auth with token in header
+        status, res = await asyncio.to_thread(self._request, "GET", "/api/admin/check",
+                                              headers={"X-Admin-Token": token}, use_auth=False)
+        self.assertEqual(status, 200)
+        self.assertTrue(res.get("authenticated"))
+
+        # 4. Access protected endpoint /api/users using token
+        status, res = await asyncio.to_thread(self._request, "GET", "/api/users",
+                                              headers={"X-Admin-Token": token}, use_auth=False)
+        self.assertEqual(status, 200)
+        self.assertIn("users", res)
+
+        # 5. Logout
+        status, res = await asyncio.to_thread(self._request, "POST", "/api/admin/logout",
+                                              headers={"X-Admin-Token": token}, use_auth=False)
+        self.assertEqual(status, 200)
+
+        # 6. Check auth after logout -> False
+        status, res = await asyncio.to_thread(self._request, "GET", "/api/admin/check",
+                                              headers={"X-Admin-Token": token}, use_auth=False)
+        self.assertEqual(status, 200)
+        self.assertFalse(res.get("authenticated"))
+
+        # 7. Access /api/users after logout -> 401
+        status, res = await asyncio.to_thread(self._request, "GET", "/api/users",
+                                              headers={"X-Admin-Token": token}, use_auth=False)
+        self.assertEqual(status, 401)
+
+    async def test_guest_dashboard_view(self):
+        """Verify guest loading dashboard gets login prompt and loginModal."""
+        status, html_content = await asyncio.to_thread(self._request, "GET", "/", use_auth=False)
+        self.assertEqual(status, 200)
+        self.assertIn("loginModal", html_content)
+        self.assertIn("Вход администратора", html_content)
+        self.assertIn("adminLoginForm", html_content)
 
 
 if __name__ == "__main__":

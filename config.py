@@ -18,8 +18,16 @@ HTTP_PORT = int(os.getenv("MSNP_HTTP_PORT", "1865"))      # HTTP Nexus, Tweener 
 # Database file path (required: database.db in project root)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "database.db")
-# Secret key used to encrypt passwords stored in database.db
+# Secret key used to encrypt passwords stored in database.db and admin credentials
 DB_SECRET_KEY = os.getenv("MSNP_DB_SECRET_KEY", "msnp_server_default_master_salt_key_2026")
+
+# Administrator credentials for Web Admin Dashboard and Admin API
+# The password is encrypted using DB_SECRET_KEY (default plaintext: admin123)
+# To generate a new encrypted password, run: python generate_admin_password.py
+ADMIN_PASSWORD = os.getenv(
+    "MSNP_ADMIN_PASSWORD",
+    "enc:v1:gAAAAABqrGOFz73J-WDRDYZdK2mk8lVVVicqvqxuIceBUQK-_J_kfnmUtnWN3fdrSS8cXj5gopHxwW8V6Bi2dupcwhkW2ibZew=="
+)
 
 # Server Identification
 SERVER_NAME = "Python MSNP Server"

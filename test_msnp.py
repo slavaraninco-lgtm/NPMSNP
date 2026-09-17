@@ -524,13 +524,27 @@ class TestEndToEndIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(reg_data.get("success"))
         self.assertEqual(reg_data.get("email"), "charlie@msn.local")
 
-        # 4. Test API Status
-        def fetch_status():
-            req = urllib.request.Request(f"http://127.0.0.1:{self.http_port}/api/status")
+        # 4. Test API Status (Requires admin auth, unauth should return 401)
+        def fetch_status_unauth():
+            try:
+                req = urllib.request.Request(f"http://127.0.0.1:{self.http_port}/api/status")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    return resp.status
+            except urllib.error.HTTPError as e:
+                return e.code
+
+        status_unauth = await asyncio.to_thread(fetch_status_unauth)
+        self.assertEqual(status_unauth, 401)
+
+        def fetch_status_auth():
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{self.http_port}/api/status",
+                headers={"X-Admin-Password": "admin123"},
+            )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 return resp.status, json.loads(resp.read().decode("utf-8"))
 
-        status, status_data = await asyncio.to_thread(fetch_status)
+        status, status_data = await asyncio.to_thread(fetch_status_auth)
         self.assertEqual(status, 200)
         self.assertEqual(status_data.get("status"), "online")
         self.assertGreaterEqual(status_data.get("total_users"), 3)

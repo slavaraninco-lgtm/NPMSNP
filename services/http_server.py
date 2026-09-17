@@ -12,9 +12,11 @@ Provides:
 """
 import asyncio
 import html
+import hmac
 import json
 import logging
 import os
+import secrets
 import time
 import urllib.parse
 from http import HTTPStatus
@@ -22,6 +24,7 @@ from typing import Dict, Any, Optional, List
 
 import config
 from db.database import Database
+from db.security import decrypt_password
 from protocol.auth import AuthManager
 from services.session_manager import SessionManager
 from services.switchboard_manager import SwitchboardManager
@@ -44,6 +47,7 @@ class HTTPServer:
         self.auto_register = auto_register
         self.start_time = time.time()
         self._server = None
+        self._admin_sessions: Dict[str, float] = {}
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(self._handle_client, self.host, self.port)
@@ -129,6 +133,73 @@ class HTTPServer:
             target_email, message, self.session_manager, self.external_host, sb_port
         )
 
+    def get_admin_password(self) -> str:
+        """Retrieves and decrypts the configured administrator password."""
+        raw_pwd = getattr(config, "ADMIN_PASSWORD", "")
+        secret_key = getattr(config, "DB_SECRET_KEY", "msnp_server_default_master_salt_key_2026")
+        if not raw_pwd:
+            return ""
+        return decrypt_password(raw_pwd, secret_key)
+
+    def _parse_cookies(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """Parses standard Cookie header into key-value dictionary."""
+        cookie_str = headers.get("cookie", "")
+        cookies: Dict[str, str] = {}
+        if cookie_str:
+            for part in cookie_str.split(";"):
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    cookies[k.strip()] = v.strip()
+        return cookies
+
+    def _is_valid_admin_token(self, token: str) -> bool:
+        """Validates that session token exists and has not expired."""
+        if not token or token not in self._admin_sessions:
+            return False
+        expires_at = self._admin_sessions[token]
+        if time.time() > expires_at:
+            del self._admin_sessions[token]
+            return False
+        return True
+
+    def _is_admin_authenticated(self, headers: Dict[str, str]) -> bool:
+        """
+        Verifies if request has valid administrator credentials.
+        Supports:
+        - Header X-Admin-Password: <plain_password>
+        - Header X-Admin-Token: <token>
+        - Header Authorization: Bearer <token>
+        - Cookie admin_session=<token>
+        """
+        admin_pwd = self.get_admin_password()
+        if not admin_pwd:
+            return False
+
+        # 1. Direct password header
+        hdr_pwd = headers.get("x-admin-password")
+        if hdr_pwd and hmac.compare_digest(hdr_pwd, admin_pwd):
+            return True
+
+        # 2. Token header
+        token = headers.get("x-admin-token")
+        if token and self._is_valid_admin_token(token):
+            return True
+
+        # 3. Authorization Bearer header
+        auth_hdr = headers.get("authorization", "")
+        if auth_hdr.lower().startswith("bearer "):
+            b_token = auth_hdr[7:].strip()
+            if self._is_valid_admin_token(b_token):
+                return True
+
+        # 4. Cookie session
+        cookies = self._parse_cookies(headers)
+        c_token = cookies.get("admin_session")
+        if c_token and self._is_valid_admin_token(c_token):
+            return True
+
+        return False
+
     async def _dispatch(self, writer: asyncio.StreamWriter, method: str, path: str,
                          headers: Dict[str, str], body: bytes) -> None:
         path_lower = path.lower()
@@ -190,7 +261,43 @@ class HTTPServer:
             self._send_response(writer, HTTPStatus.UNAUTHORIZED, resp_headers, b"Authentication Failed\r\n")
             return
 
-        # 3. API: User Registration (POST /api/register)
+        # 3. Admin Authentication Endpoints
+        # POST /api/admin/login
+        if path_lower == "/api/admin/login" and method == "POST":
+            data = self._parse_body(headers, body)
+            pwd = data.get("password") or ""
+            admin_pwd = self.get_admin_password()
+            if admin_pwd and hmac.compare_digest(pwd, admin_pwd):
+                token = secrets.token_hex(32)
+                self._admin_sessions[token] = time.time() + 86400 * 7  # 7 days
+                resp_hdrs = {
+                    "Set-Cookie": f"admin_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={86400 * 7}"
+                }
+                self._send_json(writer, {"success": True, "token": token}, resp_headers=resp_hdrs)
+                return
+            else:
+                self._send_json(writer, {"error": "Неверный пароль администратора"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+
+        # POST /api/admin/logout
+        if path_lower == "/api/admin/logout" and method == "POST":
+            cookies = self._parse_cookies(headers)
+            token = headers.get("x-admin-token") or cookies.get("admin_session")
+            if token and token in self._admin_sessions:
+                del self._admin_sessions[token]
+            resp_hdrs = {
+                "Set-Cookie": "admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+            }
+            self._send_json(writer, {"success": True}, resp_headers=resp_hdrs)
+            return
+
+        # GET /api/admin/check
+        if path_lower == "/api/admin/check" and method == "GET":
+            is_auth = self._is_admin_authenticated(headers)
+            self._send_json(writer, {"authenticated": is_auth})
+            return
+
+        # 4. API: User Registration (POST /api/register) - PUBLIC, NO ADMIN AUTH REQUIRED
         if path_lower == "/api/register" and method == "POST":
             data = self._parse_body(headers, body)
             email = (data.get("email") or "").strip()
@@ -218,7 +325,16 @@ class HTTPServer:
             })
             return
 
-        # 4. API: Get Users List (GET /api/users)
+        # 5. ALL OTHER /api/ ENDPOINTS REQUIRE ADMIN AUTHENTICATION
+        if path_lower.startswith("/api/"):
+            if not self._is_admin_authenticated(headers):
+                self._send_json(writer, {
+                    "error": "Доступ запрещен: требуется авторизация администратора",
+                    "auth_required": True
+                }, status=HTTPStatus.UNAUTHORIZED)
+                return
+
+        # 6. API: Get Users List (GET /api/users)
         if path_lower == "/api/users" and method == "GET":
             users = self.db.get_all_users_with_meta()
             for u in users:
@@ -485,9 +601,9 @@ class HTTPServer:
             })
             return
 
-        # 15. Web UI Dashboard (/)
-        if path_lower in ("/", "/index.html"):
-            html_content = self._render_dashboard()
+        # 16. Web UI Dashboard (/)
+        if path_lower in ("/", "/index.html", "/admin"):
+            html_content = self._render_dashboard(headers=headers)
             resp_headers = {"Content-Type": "text/html; charset=utf-8"}
             self._send_response(writer, HTTPStatus.OK, resp_headers, html_content.encode("utf-8"))
             return
@@ -505,15 +621,21 @@ class HTTPServer:
         head = "\r\n".join(header_lines) + "\r\n\r\n"
         writer.write(head.encode("latin-1") + body)
 
-    def _send_json(self, writer: asyncio.StreamWriter, obj: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+    def _send_json(self, writer: asyncio.StreamWriter, obj: Any, status: HTTPStatus = HTTPStatus.OK,
+                   resp_headers: Optional[Dict[str, str]] = None) -> None:
         body = json.dumps(obj, indent=2).encode("utf-8")
         headers = {"Content-Type": "application/json; charset=utf-8"}
+        if resp_headers:
+            headers.update(resp_headers)
         self._send_response(writer, status, headers, body)
 
-    def _render_dashboard(self) -> str:
-        db_stats = self.db.get_database_stats()
-        users = self.db.get_all_users_with_meta()
-        active_users = self.session_manager.get_active_users_list()
+    def _render_dashboard(self, headers: Optional[Dict[str, str]] = None) -> str:
+        headers = headers or {}
+        is_admin = self._is_admin_authenticated(headers)
+
+        db_stats = self.db.get_database_stats() if is_admin else {}
+        users = self.db.get_all_users_with_meta() if is_admin else []
+        active_users = self.session_manager.get_active_users_list() if is_admin else []
         uptime_total_sec = int(time.time() - self.start_time)
         uptime_hours = uptime_total_sec // 3600
         uptime_mins = (uptime_total_sec % 3600) // 60
@@ -521,6 +643,11 @@ class HTTPServer:
         uptime_str = f"{uptime_hours} ч. {uptime_mins} мин. {uptime_secs} сек."
 
         db_size_kb = round(db_stats.get("db_size_bytes", 0) / 1024, 1)
+
+        if is_admin:
+            auth_badge_html = '''<span id="authStatusText" style="color: #008000; font-weight: bold;">&#128274; Администратор: Авторизован</span> <button type="button" id="authBtn" class="btn-classic btn-sm" onclick="submitAdminLogout()" style="margin-left: 6px;">Выйти</button>'''
+        else:
+            auth_badge_html = '''<span id="authStatusText" style="color: #666;">&#128274; Гостевой режим (регистрация)</span> <button type="button" id="authBtn" class="btn-classic btn-sm" onclick="openLoginModal()" style="margin-left: 6px;">Вход администратора</button>'''
 
         # Pre-render initial rows for accounts table
         user_rows = []
@@ -576,8 +703,6 @@ class HTTPServer:
             </tr>
             """)
 
-        user_rows_html = "\n".join(user_rows) if user_rows else "<tr><td colspan='7' align='center' style='color: #666; padding: 12px;'>В базе данных пока нет зарегистрированных пользователей</td></tr>"
-
         # Pre-render initial rows for active connections table
         conn_rows = []
         for idx, sess in enumerate(active_users):
@@ -602,7 +727,12 @@ class HTTPServer:
             </tr>
             """)
 
-        conn_rows_html = "\n".join(conn_rows) if conn_rows else "<tr><td colspan='6' align='center' style='color: #666; padding: 12px;'>Нет активных подключений в данный момент</td></tr>"
+        if is_admin:
+            user_rows_html = "\n".join(user_rows) if user_rows else "<tr><td colspan='7' align='center' style='color: #666; padding: 12px;'>В базе данных пока нет зарегистрированных пользователей</td></tr>"
+            conn_rows_html = "\n".join(conn_rows) if conn_rows else "<tr><td colspan='6' align='center' style='color: #666; padding: 12px;'>Нет активных подключений в данный момент</td></tr>"
+        else:
+            user_rows_html = "<tr><td colspan='7' align='center' style='color: #666; padding: 25px;'><strong>Доступ к списку пользователей защищен паролем администратора.</strong><br><br><button type='button' class='btn-classic' onclick='openLoginModal()'>Ввести пароль администратора</button></td></tr>"
+            conn_rows_html = "<tr><td colspan='6' align='center' style='color: #666; padding: 20px;'><strong>Доступ к списку подключений защищен паролем администратора.</strong><br><br><button type='button' class='btn-classic' onclick='openLoginModal()'>Ввести пароль администратора</button></td></tr>"
 
         service_email = getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local")
         service_name = getattr(config, "SERVICE_ACCOUNT_NAME", "Служба сообщений MSN")
@@ -918,11 +1048,16 @@ class HTTPServer:
         <span style="font-size: 11px; font-weight: normal;">Microsoft Notification Protocol Service</span>
     </div>
 
-    <div class="sub-bar">
-        Статус: <strong style="color: #008000;">РАБОТАЕТ</strong> &bull;
-        Хост: <strong>{self.external_host}</strong> &bull;
-        Порты: <strong>NS: 1863 | SB: 1864 | HTTP: {self.port}</strong> &bull;
-        Служебный бот: <strong>{service_name} ({service_email})</strong>
+    <div class="sub-bar" style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            Статус: <strong style="color: #008000;">РАБОТАЕТ</strong> &bull;
+            Хост: <strong>{self.external_host}</strong> &bull;
+            Порты: <strong>NS: 1863 | SB: 1864 | HTTP: {self.port}</strong> &bull;
+            Служебный бот: <strong>{service_name} ({service_email})</strong>
+        </div>
+        <div id="adminAuthBadge">
+            {auth_badge_html}
+        </div>
     </div>
 
     <!-- Вкладки (Tabs) -->
@@ -1373,12 +1508,154 @@ class HTTPServer:
     </div>
 </div>
 
+<!-- Модальное окно: Вход администратора -->
+<div id="loginModal" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 360px;">
+        <div class="modal-titlebar">
+            <span>Вход администратора сервера</span>
+            <div class="modal-close-btn" onclick="closeModal('loginModal')">&times;</div>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0; color: #333; line-height: 1.4;">
+                Для доступа к управлению учетными записями, отправке оповещений и серверу введите пароль администратора:
+            </p>
+            <form id="adminLoginForm" onsubmit="event.preventDefault(); submitAdminLogin();">
+                <table width="100%" border="0" cellspacing="2" cellpadding="2">
+                    <tr>
+                        <td width="30%"><b>Пароль:</b></td>
+                        <td width="70%">
+                            <input type="password" id="adminPasswordInput" class="text-input" style="width: 100%;" placeholder="Пароль администратора" required autofocus>
+                        </td>
+                    </tr>
+                </table>
+                <div id="loginStatusMsg" class="status-msg" style="display: none; margin-top: 8px;"></div>
+                <div style="margin-top: 12px; text-align: right;">
+                    <button type="submit" class="btn-classic">Войти</button>
+                    <button type="button" class="btn-classic" onclick="closeModal('loginModal')" style="margin-left: 4px;">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script type="text/javascript">
+    var isAdminLoggedIn = {'true' if is_admin else 'false'};
     var currentTargetEmail = '';
     var autoRefreshTimer = null;
 
+    function adminFetch(url, options) {{
+        options = options || {{}};
+        options.headers = options.headers || {{}};
+        var token = localStorage.getItem('msnp_admin_token');
+        if (token) {{
+            options.headers['X-Admin-Token'] = token;
+        }}
+        return fetch(url, options).then(function(res) {{
+            if (res.status === 401) {{
+                updateAdminAuthUI(false);
+                openLoginModal();
+            }}
+            return res;
+        }});
+    }}
+
+    function openLoginModal() {{
+        var msg = document.getElementById('loginStatusMsg');
+        if (msg) msg.style.display = 'none';
+        var inp = document.getElementById('adminPasswordInput');
+        if (inp) inp.value = '';
+        var m = document.getElementById('loginModal');
+        if (m) {{
+            m.style.display = 'flex';
+            setTimeout(function() {{ if (inp) inp.focus(); }}, 100);
+        }}
+    }}
+
+    async function submitAdminLogin() {{
+        var inp = document.getElementById('adminPasswordInput');
+        var pwd = inp ? inp.value : '';
+        var msgBox = document.getElementById('loginStatusMsg');
+        if (msgBox) msgBox.style.display = 'none';
+        if (!pwd) return;
+
+        try {{
+            var res = await fetch('/api/admin/login', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ password: pwd }})
+            }});
+            var data = await res.json();
+            if (res.ok && data.success) {{
+                localStorage.setItem('msnp_admin_token', data.token);
+                updateAdminAuthUI(true);
+                closeModal('loginModal');
+                var activePane = document.querySelector('.tab-pane.active');
+                if (activePane && activePane.id === 'pane-accounts') {{
+                    refreshAccountsList();
+                }} else if (activePane && activePane.id === 'pane-server') {{
+                    refreshServerStatus();
+                }}
+            }} else {{
+                if (msgBox) {{
+                    msgBox.textContent = data.error || 'Неверный пароль администратора';
+                    msgBox.className = 'status-msg msg-error';
+                    msgBox.style.display = 'block';
+                }}
+            }}
+        }} catch (err) {{
+            if (msgBox) {{
+                msgBox.textContent = 'Ошибка связи: ' + err.message;
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }}
+        }}
+    }}
+
+    async function submitAdminLogout() {{
+        try {{
+            await adminFetch('/api/admin/logout', {{ method: 'POST' }});
+        }} catch (e) {{}}
+        localStorage.removeItem('msnp_admin_token');
+        updateAdminAuthUI(false);
+        switchTab('reg');
+        var tb = document.getElementById('usersTableBody');
+        if (tb) tb.innerHTML = '<tr><td colspan="7" align="center" style="color: #666; padding: 25px;"><strong>Доступ к списку пользователей защищен паролем администратора.</strong><br><br><button type="button" class="btn-classic" onclick="openLoginModal()">Ввести пароль администратора</button></td></tr>';
+        var cb = document.getElementById('connectionsTableBody');
+        if (cb) cb.innerHTML = '<tr><td colspan="6" align="center" style="color: #666; padding: 20px;"><strong>Доступ к списку подключений защищен паролем администратора.</strong><br><br><button type="button" class="btn-classic" onclick="openLoginModal()">Ввести пароль администратора</button></td></tr>';
+    }}
+
+    function updateAdminAuthUI(isAuth) {{
+        isAdminLoggedIn = isAuth;
+        var badge = document.getElementById('adminAuthBadge');
+        if (!badge) return;
+        if (isAuth) {{
+            badge.innerHTML = '<span id="authStatusText" style="color: #008000; font-weight: bold;">&#128274; Администратор: Авторизован</span> <button type="button" id="authBtn" class="btn-classic btn-sm" onclick="submitAdminLogout()" style="margin-left: 6px;">Выйти</button>';
+        }} else {{
+            badge.innerHTML = '<span id="authStatusText" style="color: #666;">&#128274; Гостевой режим (регистрация)</span> <button type="button" id="authBtn" class="btn-classic btn-sm" onclick="openLoginModal()" style="margin-left: 6px;">Вход администратора</button>';
+        }}
+    }}
+
+    async function checkAdminStatus() {{
+        try {{
+            var res = await adminFetch('/api/admin/check');
+            if (res.ok) {{
+                var data = await res.json();
+                updateAdminAuthUI(Boolean(data.authenticated));
+                if (data.authenticated) {{
+                    var hash = location.hash.replace('#', '');
+                    if (hash === 'accounts') refreshAccountsList();
+                    else if (hash === 'server') refreshServerStatus();
+                }}
+            }}
+        }} catch (e) {{}}
+    }}
+
     // Tab Switching
     function switchTab(tabId) {{
+        if (tabId !== 'reg' && !isAdminLoggedIn) {{
+            openLoginModal();
+            return;
+        }}
         var tabs = ['reg', 'accounts', 'alerts', 'server'];
         for (var i = 0; i < tabs.length; i++) {{
             var t = tabs[i];
@@ -1404,6 +1681,7 @@ class HTTPServer:
 
     // Check hash on page load
     window.addEventListener('DOMContentLoaded', function() {{
+        checkAdminStatus();
         var hash = location.hash.replace('#', '');
         if (hash === 'accounts' || hash === 'server' || hash === 'reg' || hash === 'alerts') {{
             switchTab(hash);
@@ -1416,7 +1694,7 @@ class HTTPServer:
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }}
 
-    // Registration Form Handler
+    // Registration Form Handler (PUBLIC)
     document.getElementById('regForm').addEventListener('submit', async function(e) {{
         e.preventDefault();
         var msgBox = document.getElementById('regMsg');
@@ -1467,7 +1745,7 @@ class HTTPServer:
     // Refresh Accounts List
     async function refreshAccountsList() {{
         try {{
-            var res = await fetch('/api/users');
+            var res = await adminFetch('/api/users');
             if (!res.ok) return;
             var data = await res.json();
             var users = data.users || [];
@@ -1574,7 +1852,7 @@ class HTTPServer:
         document.getElementById('notifyMessageText').value = '';
         document.getElementById('notifyCustomEmail').value = '';
         var msg = document.getElementById('notifyStatusMsg');
-        msg.style.display = 'none';
+        if (msg) msg.style.display = 'none';
     }}
 
     // Submit Notification / Broadcast
@@ -1600,7 +1878,7 @@ class HTTPServer:
         if (!message) return;
 
         try {{
-            var res = await fetch('/api/notify', {{
+            var res = await adminFetch('/api/notify', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ target: target, message: message }})
@@ -1645,7 +1923,7 @@ class HTTPServer:
         if (!apply) {{
             // Lift ban
             try {{
-                var res = await fetch('/api/users/unban', {{
+                var res = await adminFetch('/api/users/unban', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ email: currentTargetEmail }})
@@ -1674,7 +1952,7 @@ class HTTPServer:
         var reason = document.getElementById('modalBanReason').value.trim();
 
         try {{
-            var res = await fetch('/api/users/ban', {{
+            var res = await adminFetch('/api/users/ban', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{
@@ -1720,7 +1998,7 @@ class HTTPServer:
         if (!apply) {{
             // Lift mute
             try {{
-                var res = await fetch('/api/users/unmute', {{
+                var res = await adminFetch('/api/users/unmute', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ email: currentTargetEmail }})
@@ -1749,7 +2027,7 @@ class HTTPServer:
         var reason = document.getElementById('modalMuteReason').value.trim();
 
         try {{
-            var res = await fetch('/api/users/mute', {{
+            var res = await adminFetch('/api/users/mute', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{
@@ -1794,7 +2072,7 @@ class HTTPServer:
         if (!text) return;
 
         try {{
-            var res = await fetch('/api/notify', {{
+            var res = await adminFetch('/api/notify', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ target: currentTargetEmail, message: text }})
@@ -1856,7 +2134,7 @@ class HTTPServer:
         }}
 
         try {{
-            var res = await fetch('/api/users/update_password', {{
+            var res = await adminFetch('/api/users/update_password', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ email: currentTargetEmail, password: newPwd }})
@@ -1884,7 +2162,7 @@ class HTTPServer:
         var msgBox = document.getElementById('modalNameMsg');
 
         try {{
-            var res = await fetch('/api/users/update_name', {{
+            var res = await adminFetch('/api/users/update_name', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ email: currentTargetEmail, friendly_name: newName }})
@@ -1913,7 +2191,7 @@ class HTTPServer:
     async function disconnectUser(email) {{
         if (!confirm('Принудительно отключить активную сессию пользователя ' + email + '?')) return;
         try {{
-            var res = await fetch('/api/users/disconnect', {{
+            var res = await adminFetch('/api/users/disconnect', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ email: email }})
@@ -1933,7 +2211,7 @@ class HTTPServer:
     async function deleteUser(email) {{
         if (!confirm('ВНИМАНИЕ: Вы действительно хотите удалить учетную запись ' + email + '?\\n\\nВсе контакты, группы и сообщения этого пользователя будут безвозвратно стерты.')) return;
         try {{
-            var res = await fetch('/api/users/delete', {{
+            var res = await adminFetch('/api/users/delete', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{ email: email }})
@@ -1952,7 +2230,7 @@ class HTTPServer:
 
     async function refreshServerStatus() {{
         try {{
-            var res = await fetch('/api/status');
+            var res = await adminFetch('/api/status');
             if (!res.ok) return;
             var data = await res.json();
 
