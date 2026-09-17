@@ -107,21 +107,37 @@ class MSNPServer:
         # Start HTTP / Nexus / Web Admin Server
         await self.http_server.start()
 
-        print("\n" + "=" * 65)
-        print(f"  {config.SERVER_NAME} v{config.SERVER_VERSION} RUNNING")
-        print("=" * 65)
-        print(f"  * Notification Server (NS): {self.external_host}:{self.ns_port}")
-        print(f"  * Switchboard Server  (SB): {self.external_host}:{self.sb_port}")
-        print(f"  * Web Dashboard / HTTP    : http://{self.external_host}:{self.http_port}/")
-        print(f"  * SQLite Database         : {os.path.abspath(self.db_path)}")
-        print("=" * 65 + "\n")
+        project_name = getattr(config, "PROJECT_NAME", "NPMSNP")
+        server_name = getattr(config, "SERVER_NAME", "NPMSNP Server")
+        version = getattr(config, "SERVER_VERSION", "1.0.0")
+
+        banner = rf"""
+=================================================================
+  _   _ _____  __  __ _____ _   _ _____  
+ | \ | |  __ \|  \/  / ____| \ | |  __ \ 
+ |  \| | |__) | \  / | (___ |  \| | |__) |
+ | . ` |  ___/| |\/| |\___ \| . ` |  ___/ 
+ | |\  | |    | |  | |____) | |\  | |     
+ |_| \_|_|    |_|  |_|_____/|_| \_|_|     
+=================================================================
+  Project: {project_name} | {server_name} v{version} RUNNING
+=================================================================
+  * Project Name            : {project_name}
+  * Notification Server (NS): {self.external_host}:{self.ns_port}
+  * Switchboard Server  (SB): {self.external_host}:{self.sb_port}
+  * Web Admin Dashboard     : http://{self.external_host}:{self.http_port}/
+  * SQLite Database         : {os.path.abspath(self.db_path)}
+=================================================================
+"""
+        print(banner)
 
         # Keep server running
         while self._running:
             await asyncio.sleep(1)
 
     async def stop(self) -> None:
-        logging.info("Stopping MSNP Server...")
+        project_name = getattr(config, "PROJECT_NAME", "NPMSNP")
+        logging.info(f"Stopping {project_name} Server...")
         self._running = False
 
         if self._ns_server:
@@ -133,11 +149,12 @@ class MSNPServer:
             await self._sb_server.wait_closed()
 
         await self.http_server.stop()
-        logging.info("MSNP Server stopped successfully.")
+        logging.info(f"{project_name} Server stopped successfully.")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MSNP Server (MSN Messenger Protocol)")
+    project_name = getattr(config, "PROJECT_NAME", "NPMSNP")
+    parser = argparse.ArgumentParser(description=f"{project_name} - MSNP Server (MSN Messenger Protocol)")
     parser.add_argument("--host", default=config.BIND_HOST, help="Bind host IP")
     parser.add_argument("--external-host", default=config.EXTERNAL_HOST, help="Reported public/LAN host IP")
     parser.add_argument("--ns-port", type=int, default=config.NS_PORT, help="Notification Server port")

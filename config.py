@@ -29,8 +29,9 @@ ADMIN_PASSWORD = os.getenv(
     "enc:v1:gAAAAABqrGOFz73J-WDRDYZdK2mk8lVVVicqvqxuIceBUQK-_J_kfnmUtnWN3fdrSS8cXj5gopHxwW8V6Bi2dupcwhkW2ibZew=="
 )
 
-# Server Identification
-SERVER_NAME = "Python MSNP Server"
+# Server & Project Identification
+PROJECT_NAME = os.getenv("MSNP_PROJECT_NAME", "NPMSNP")
+SERVER_NAME = os.getenv("MSNP_SERVER_NAME", "NPMSNP Server")
 SERVER_VERSION = "1.0.0"
 DEFAULT_DOMAIN = "msn.local"
 

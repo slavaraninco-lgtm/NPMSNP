@@ -58,8 +58,9 @@ def update_config_file(config_path: str, encrypted_password: str) -> bool:
 
 
 def main():
+    project_name = getattr(config, "PROJECT_NAME", "NPMSNP")
     parser = argparse.ArgumentParser(
-        description="Генератор зашифрованного пароля администратора для панели управления MSNP Server"
+        description=f"Генератор зашифрованного пароля администратора для панели управления {project_name} Server"
     )
     parser.add_argument(
         "password",
@@ -107,7 +108,7 @@ def main():
         sys.exit(1)
 
     print("=" * 70)
-    print("  ГЕНЕРАТОР ЗАШИФРОВАННОГО ПАРОЛЯ АДМИНИСТРАТОРА MSNP")
+    print(f"  ГЕНЕРАТОР ЗАШИФРОВАННОГО ПАРОЛЯ АДМИНИСТРАТОРА {project_name}")
     print("=" * 70)
     print(f"Открытый пароль      : {'*' * len(raw_password)} ({len(raw_password)} симв.)")
     print(f"Зашифрованный токен  : {encrypted_token}")

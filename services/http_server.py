@@ -586,6 +586,9 @@ class HTTPServer:
             stats = self.db.get_database_stats()
             active_users = self.session_manager.get_active_users_list()
             self._send_json(writer, {
+                "project": getattr(config, "PROJECT_NAME", "NPMSNP"),
+                "server_name": getattr(config, "SERVER_NAME", "NPMSNP Server"),
+                "version": getattr(config, "SERVER_VERSION", "1.0.0"),
                 "status": "online",
                 "uptime_seconds": uptime_seconds,
                 "total_users": stats.get("total_users", 0),
@@ -736,12 +739,15 @@ class HTTPServer:
 
         service_email = getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local")
         service_name = getattr(config, "SERVICE_ACCOUNT_NAME", "Служба сообщений MSN")
+        project_name = getattr(config, "PROJECT_NAME", "NPMSNP")
+        server_name = getattr(config, "SERVER_NAME", "NPMSNP Server")
+        server_version = getattr(config, "SERVER_VERSION", "1.0.0")
 
         return f"""<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
 <html>
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>MSNP Server - Панель управления</title>
+    <title>{project_name} - Панель управления</title>
     <style type="text/css">
         body {{
             background-color: #d4d0c8;
@@ -1044,12 +1050,13 @@ class HTTPServer:
 
 <div id="container">
     <div class="header-bar">
-        <span>MSNP Server Administration Console [v1.0.0]</span>
-        <span style="font-size: 11px; font-weight: normal;">Microsoft Notification Protocol Service</span>
+        <span>{project_name} &bull; Панель управления сервером [v{server_version}]</span>
+        <span style="font-size: 11px; font-weight: normal;">Microsoft Notification Protocol Service &bull; {project_name}</span>
     </div>
 
     <div class="sub-bar" style="display: flex; justify-content: space-between; align-items: center;">
         <div>
+            Проект: <strong style="color: #000080;">{project_name}</strong> &bull;
             Статус: <strong style="color: #008000;">РАБОТАЕТ</strong> &bull;
             Хост: <strong>{self.external_host}</strong> &bull;
             Порты: <strong>NS: 1863 | SB: 1864 | HTTP: {self.port}</strong> &bull;
@@ -1279,28 +1286,32 @@ class HTTPServer:
                 <legend>Статус служб и производительность сервера</legend>
                 <table width="100%" border="0" cellspacing="3" cellpadding="2">
                     <tr>
-                        <td width="25%"><b>Notification Server (NS):</b></td>
-                        <td width="25%"><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ 1863]</span></td>
+                        <td width="25%"><b>Проект / Сервер:</b></td>
+                        <td width="25%"><span style="color: #000080; font-weight: bold;">{project_name} (v{server_version})</span></td>
                         <td width="25%"><b>Время непрерывной работы:</b></td>
                         <td width="25%"><span id="serverUptimeText"><strong>{uptime_str}</strong></span></td>
                     </tr>
                     <tr>
-                        <td><b>Switchboard Server (SB):</b></td>
-                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ 1864]</span></td>
+                        <td><b>Notification Server (NS):</b></td>
+                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ 1863]</span></td>
                         <td><b>Пользователей онлайн:</b></td>
                         <td><span id="serverActiveCountText" style="color: #008000; font-weight: bold;">{len(active_users)}</span> / <span id="serverTotalUsersText">{len(users)}</span></td>
                     </tr>
                     <tr>
-                        <td><b>HTTP Nexus & Tweener:</b></td>
-                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ {self.port}]</span></td>
+                        <td><b>Switchboard Server (SB):</b></td>
+                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ 1864]</span></td>
                         <td><b>Связей в списках контактов:</b></td>
                         <td><span id="serverTotalContactsText"><strong>{db_stats.get('total_contacts', 0)}</strong></span> (Групп: <span id="serverTotalGroupsText">{db_stats.get('total_groups', 0)}</span>)</td>
                     </tr>
                     <tr>
-                        <td><b>Файл базы данных:</b></td>
-                        <td><code>database.db</code> ({db_size_kb} КБ, SQLite WAL)</td>
+                        <td><b>HTTP Nexus & Tweener:</b></td>
+                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ {self.port}]</span></td>
                         <td><b>Офлайн-сообщений в очереди:</b></td>
                         <td><span id="serverPendingMsgsText"><strong>{db_stats.get('pending_offline_messages', 0)}</strong></span></td>
+                    </tr>
+                    <tr>
+                        <td><b>Файл базы данных:</b></td>
+                        <td colspan="3"><code>database.db</code> ({db_size_kb} КБ, SQLite WAL)</td>
                     </tr>
                 </table>
             </fieldset>
@@ -1343,7 +1354,7 @@ class HTTPServer:
     </div>
 
     <div class="footer">
-        MSNP Server Administration Console &bull; Microsoft Notification Protocol Emulator &bull; Готово
+        {project_name} Server Administration Console &bull; Microsoft Notification Protocol Emulator &bull; Готово
     </div>
 </div>
 
@@ -1512,7 +1523,7 @@ class HTTPServer:
 <div id="loginModal" class="modal-overlay">
     <div class="modal-dialog" style="max-width: 360px;">
         <div class="modal-titlebar">
-            <span>Вход администратора сервера</span>
+            <span>{project_name} - Вход администратора</span>
             <div class="modal-close-btn" onclick="closeModal('loginModal')">&times;</div>
         </div>
         <div class="modal-body">
