@@ -7,7 +7,6 @@ import datetime
 import os
 import sqlite3
 import threading
-import time
 from typing import Optional, List, Dict, Any
 
 from .models import UserRecord, ContactRecord, GroupRecord, OfflineMessageRecord
@@ -102,19 +101,6 @@ class Database:
                     message TEXT NOT NULL,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     delivered INTEGER DEFAULT 0
-                );
-                """)
-
-                # Uploaded files table
-                cursor.execute("""
-                CREATE TABLE IF NOT EXISTS uploaded_files (
-                    file_id TEXT PRIMARY KEY,
-                    original_name TEXT NOT NULL,
-                    stored_name TEXT NOT NULL,
-                    file_size INTEGER NOT NULL,
-                    uploaded_at REAL NOT NULL,
-                    uploaded_by TEXT NOT NULL COLLATE NOCASE,
-                    download_count INTEGER DEFAULT 0
                 );
                 """)
                 
@@ -803,59 +789,3 @@ class Database:
                 cursor = conn.cursor()
                 cursor.execute("UPDATE offline_messages SET delivered = 1 WHERE recipient = ?;", (recipient,))
                 conn.commit()
-
-    # Uploaded Files Management
-    def save_uploaded_file(self, file_id: str, original_name: str, stored_name: str,
-                           file_size: int, uploaded_by: str) -> Dict[str, Any]:
-        uploaded_at = time.time()
-        with self._lock:
-            with self._connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                INSERT INTO uploaded_files (file_id, original_name, stored_name, file_size, uploaded_at, uploaded_by, download_count)
-                VALUES (?, ?, ?, ?, ?, ?, 0);
-                """, (file_id, original_name, stored_name, file_size, uploaded_at, uploaded_by.strip()))
-                conn.commit()
-        return {
-            "file_id": file_id,
-            "original_name": original_name,
-            "stored_name": stored_name,
-            "file_size": file_size,
-            "uploaded_at": uploaded_at,
-            "uploaded_by": uploaded_by.strip(),
-            "download_count": 0,
-        }
-
-    def get_uploaded_file(self, file_id: str) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            with self._connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM uploaded_files WHERE file_id = ?;", (file_id.strip(),))
-                row = cursor.fetchone()
-                if not row:
-                    return None
-                return dict(row)
-
-    def get_all_uploaded_files(self) -> List[Dict[str, Any]]:
-        with self._lock:
-            with self._connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM uploaded_files ORDER BY uploaded_at DESC;")
-                rows = cursor.fetchall()
-                return [dict(r) for r in rows]
-
-    def increment_download_count(self, file_id: str) -> None:
-        with self._lock:
-            with self._connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE uploaded_files SET download_count = download_count + 1 WHERE file_id = ?;", (file_id.strip(),))
-                conn.commit()
-
-    def delete_uploaded_file(self, file_id: str) -> bool:
-        with self._lock:
-            with self._connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM uploaded_files WHERE file_id = ?;", (file_id.strip(),))
-                deleted = cursor.rowcount > 0
-                conn.commit()
-                return deleted

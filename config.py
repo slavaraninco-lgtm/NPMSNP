@@ -51,10 +51,3 @@ PREFER_MD5_AUTH = False
 SERVICE_ACCOUNT_EMAIL = os.getenv("MSNP_SERVICE_EMAIL", "system@msn.local")
 SERVICE_ACCOUNT_NAME = os.getenv("MSNP_SERVICE_NAME", "Служба сообщений MSN")
 AUTO_ADD_SERVICE_CONTACT = os.getenv("MSNP_AUTO_ADD_SERVICE_CONTACT", "true").lower() in ("true", "1", "yes")
-
-# File Transfer & Storage Configuration
-MSNFTP_PORT = int(os.getenv("MSNP_MSNFTP_PORT", "1866"))      # MSNFTP Relay / Bridge port
-FILES_STORAGE_DIR = os.getenv("MSNP_FILES_DIR", os.path.join(BASE_DIR, "storage", "files"))
-MAX_FILE_SIZE_MB = int(os.getenv("MSNP_MAX_FILE_SIZE_MB", "100"))
-ENABLE_MSNFTP_NAT_REWRITE = os.getenv("MSNP_ENABLE_MSNFTP_NAT_REWRITE", "true").lower() in ("true", "1", "yes")
-

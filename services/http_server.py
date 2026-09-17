@@ -11,15 +11,11 @@ Provides:
 - RESTful JSON API endpoints for dashboard operations
 """
 import asyncio
-import base64
-import datetime
 import html
 import hmac
 import json
 import logging
-import mimetypes
 import os
-import re
 import secrets
 import time
 import urllib.parse
@@ -40,8 +36,7 @@ class HTTPServer:
     def __init__(self, host: str, port: int, external_host: str, db: Database,
                  auth_manager: AuthManager, session_manager: SessionManager,
                  switchboard_manager: Optional[SwitchboardManager] = None,
-                 auto_register: bool = True,
-                 msnftp_relay: Optional[Any] = None):
+                 auto_register: bool = True):
         self.host = host
         self.port = port
         self.external_host = external_host
@@ -50,17 +45,9 @@ class HTTPServer:
         self.session_manager = session_manager
         self.switchboard_manager = switchboard_manager
         self.auto_register = auto_register
-        self.msnftp_relay = msnftp_relay
         self.start_time = time.time()
         self._server = None
         self._admin_sessions: Dict[str, float] = {}
-
-        # Ensure file storage directory exists
-        storage_dir = getattr(config, "FILES_STORAGE_DIR", os.path.join(config.BASE_DIR, "storage", "files"))
-        try:
-            os.makedirs(storage_dir, exist_ok=True)
-        except Exception as ex:
-            logger.warning(f"Could not create storage directory {storage_dir}: {ex}")
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(self._handle_client, self.host, self.port)
@@ -120,51 +107,10 @@ class HTTPServer:
             except Exception:
                 pass
 
-    def _parse_multipart(self, body: bytes, boundary: bytes) -> Dict[str, Any]:
-        delimiter = b"--" + boundary
-        parts = body.split(delimiter)
-        result: Dict[str, Any] = {}
-        for part in parts:
-            if not part or part.strip() in (b"", b"--", b"--\r\n"):
-                continue
-            if part.startswith(b"\r\n"):
-                part = part[2:]
-            if part.endswith(b"\r\n"):
-                part = part[:-2]
-            if b"\r\n\r\n" not in part:
-                continue
-            head_bytes, val_bytes = part.split(b"\r\n\r\n", 1)
-            head_str = head_bytes.decode("utf-8", errors="replace")
-            disp_match = re.search(r'name="([^"]+)"', head_str)
-            if not disp_match:
-                continue
-            field_name = disp_match.group(1)
-            file_match = re.search(r'filename="([^"]+)"', head_str)
-            if file_match:
-                filename = file_match.group(1)
-                result[field_name] = {
-                    "filename": filename,
-                    "content": val_bytes,
-                    "size": len(val_bytes),
-                }
-            else:
-                result[field_name] = val_bytes.decode("utf-8", errors="replace")
-        return result
-
     def _parse_body(self, headers: Dict[str, str], body: bytes) -> Dict[str, Any]:
-        """Parses JSON, form-urlencoded, or multipart body into a dictionary."""
+        """Parses JSON or form-urlencoded body into a dictionary."""
         content_type = headers.get("content-type", "")
-        if "multipart/form-data" in content_type:
-            try:
-                boundary = ""
-                for p in content_type.split(";"):
-                    if "boundary=" in p:
-                        boundary = p.split("boundary=", 1)[1].strip().strip('"')
-                if boundary:
-                    return self._parse_multipart(body, boundary.encode("latin-1"))
-            except Exception:
-                return {}
-        elif "application/json" in content_type:
+        if "application/json" in content_type:
             try:
                 return json.loads(body.decode("utf-8", errors="replace"))
             except Exception:
@@ -175,14 +121,6 @@ class HTTPServer:
                 return {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
             except Exception:
                 return {}
-
-    def _format_file_size(self, size_bytes: int) -> str:
-        if size_bytes < 1024:
-            return f"{size_bytes} байт"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} КБ"
-        else:
-            return f"{size_bytes / (1024 * 1024):.2f} МБ"
 
     def _dispatch_service_notice(self, target_email: str, service_email: str, service_name: str, message: str) -> bool:
         """
@@ -385,33 +323,6 @@ class HTTPServer:
                 "email": user.email,
                 "friendly_name": user.friendly_name
             })
-            return
-
-        # 4b. Public File Download (/files/<file_id> or /files/<file_id>/<filename>) - PUBLIC
-        if path_lower.startswith("/files/"):
-            parts = path.strip("/").split("/")
-            if len(parts) >= 2:
-                file_id = parts[1].strip()
-                file_rec = self.db.get_uploaded_file(file_id)
-                if file_rec:
-                    storage_dir = getattr(config, "FILES_STORAGE_DIR", os.path.join(config.BASE_DIR, "storage", "files"))
-                    file_path = os.path.join(storage_dir, file_rec["stored_name"])
-                    if os.path.exists(file_path):
-                        self.db.increment_download_count(file_id)
-                        with open(file_path, "rb") as f:
-                            file_bytes = f.read()
-                        orig_name = file_rec["original_name"]
-                        mime_type, _ = mimetypes.guess_type(orig_name)
-                        mime_type = mime_type or "application/octet-stream"
-                        safe_ascii_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', orig_name)
-                        resp_hdrs = {
-                            "Content-Type": f"{mime_type}",
-                            "Content-Disposition": f'attachment; filename="{safe_ascii_name}"; filename*=UTF-8\'\'{urllib.parse.quote(orig_name)}',
-                            "Content-Length": str(len(file_bytes)),
-                        }
-                        self._send_response(writer, HTTPStatus.OK, resp_hdrs, file_bytes)
-                        return
-            self._send_response(writer, HTTPStatus.NOT_FOUND, {"Content-Type": "text/plain; charset=utf-8"}, b"File Not Found\r\n")
             return
 
         # 5. ALL OTHER /api/ ENDPOINTS REQUIRE ADMIN AUTHENTICATION
@@ -682,7 +593,6 @@ class HTTPServer:
                 "ports": {
                     "ns": 1863,
                     "sb": 1864,
-                    "msnftp": getattr(config, "MSNFTP_PORT", 1866),
                     "http": self.port
                 },
                 "stats": stats,
@@ -691,156 +601,7 @@ class HTTPServer:
             })
             return
 
-        # 15. API: Get Files List (GET /api/files)
-        if path_lower == "/api/files" and method == "GET":
-            files = self.db.get_all_uploaded_files()
-            for f in files:
-                f["formatted_size"] = self._format_file_size(f["file_size"])
-                f["download_url"] = f"http://{self.external_host}:{self.port}/files/{f['file_id']}/{urllib.parse.quote(f['original_name'])}"
-                f["date_str"] = datetime.datetime.fromtimestamp(f["uploaded_at"]).strftime("%d.%m.%Y %H:%M")
-            self._send_json(writer, {"files": files})
-            return
-
-        # 16. API: Upload File (POST /api/files/upload)
-        if path_lower == "/api/files/upload" and method == "POST":
-            data = self._parse_body(headers, body)
-            file_bytes = None
-            filename = None
-
-            # Check multipart field
-            file_item = data.get("file") or data.get("upload_file")
-            if isinstance(file_item, dict) and "content" in file_item:
-                file_bytes = file_item["content"]
-                filename = file_item.get("filename") or "uploaded_file"
-            elif "content_base64" in data:
-                try:
-                    file_bytes = base64.b64decode(data["content_base64"])
-                    filename = data.get("filename") or "uploaded_file"
-                except Exception:
-                    file_bytes = None
-            elif body and headers.get("content-type", "").startswith("application/octet-stream"):
-                file_bytes = body
-                filename = headers.get("x-filename", "uploaded_file")
-
-            if not file_bytes:
-                self._send_json(writer, {"error": "Файл не передан или поврежден"}, status=HTTPStatus.BAD_REQUEST)
-                return
-
-            max_bytes = getattr(config, "MAX_FILE_SIZE_MB", 100) * 1024 * 1024
-            if len(file_bytes) > max_bytes:
-                self._send_json(writer, {"error": f"Размер файла превышает лимит ({config.MAX_FILE_SIZE_MB} МБ)"}, status=HTTPStatus.BAD_REQUEST)
-                return
-
-            file_id = secrets.token_hex(12)
-            safe_basename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', os.path.basename(filename))
-            stored_name = f"{file_id}_{safe_basename}"
-            storage_dir = getattr(config, "FILES_STORAGE_DIR", os.path.join(config.BASE_DIR, "storage", "files"))
-            os.makedirs(storage_dir, exist_ok=True)
-            stored_path = os.path.join(storage_dir, stored_name)
-
-            with open(stored_path, "wb") as f:
-                f.write(file_bytes)
-
-            file_rec = self.db.save_uploaded_file(
-                file_id=file_id,
-                original_name=filename,
-                stored_name=stored_name,
-                file_size=len(file_bytes),
-                uploaded_by="Administrator"
-            )
-            file_rec["formatted_size"] = self._format_file_size(len(file_bytes))
-            file_rec["download_url"] = f"http://{self.external_host}:{self.port}/files/{file_id}/{urllib.parse.quote(filename)}"
-
-            # Register in MSNFTP Relay if active
-            if getattr(self, "msnftp_relay", None):
-                self.msnftp_relay.register_session(
-                    sender_email=getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local"),
-                    receiver_email="",
-                    auth_cookie=file_id[:8],
-                    file_name=filename,
-                    file_size=len(file_bytes),
-                    file_path=stored_path
-                )
-
-            self._send_json(writer, {"success": True, "file": file_rec})
-            return
-
-        # 17. API: Delete File (POST /api/files/delete)
-        if path_lower == "/api/files/delete" and method == "POST":
-            data = self._parse_body(headers, body)
-            file_id = (data.get("file_id") or "").strip()
-            if not file_id:
-                self._send_json(writer, {"error": "file_id обязателен"}, status=HTTPStatus.BAD_REQUEST)
-                return
-
-            file_rec = self.db.get_uploaded_file(file_id)
-            if not file_rec:
-                self._send_json(writer, {"error": "Файл не найден"}, status=HTTPStatus.NOT_FOUND)
-                return
-
-            storage_dir = getattr(config, "FILES_STORAGE_DIR", os.path.join(config.BASE_DIR, "storage", "files"))
-            stored_path = os.path.join(storage_dir, file_rec["stored_name"])
-            if os.path.exists(stored_path):
-                try:
-                    os.remove(stored_path)
-                except Exception as ex:
-                    logger.warning(f"Could not remove file {stored_path}: {ex}")
-
-            self.db.delete_uploaded_file(file_id)
-            self._send_json(writer, {"success": True, "deleted_id": file_id})
-            return
-
-        # 18. API: Send File via Bot (POST /api/files/send)
-        if path_lower == "/api/files/send" and method == "POST":
-            data = self._parse_body(headers, body)
-            file_id = (data.get("file_id") or "").strip()
-            target = (data.get("target") or "").strip().lower()
-            custom_msg = (data.get("message") or "").strip()
-
-            if not file_id or not target:
-                self._send_json(writer, {"error": "file_id и target обязательны"}, status=HTTPStatus.BAD_REQUEST)
-                return
-
-            file_rec = self.db.get_uploaded_file(file_id)
-            if not file_rec:
-                self._send_json(writer, {"error": "Файл не найден"}, status=HTTPStatus.NOT_FOUND)
-                return
-
-            service_email = getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local")
-            service_name = getattr(config, "SERVICE_ACCOUNT_NAME", "Служба сообщений MSN")
-            download_url = f"http://{self.external_host}:{self.port}/files/{file_id}/{urllib.parse.quote(file_rec['original_name'])}"
-            size_str = self._format_file_size(file_rec["file_size"])
-
-            notice = f"Вам отправлен файл: {file_rec['original_name']} ({size_str})\r\nСкачать: {download_url}"
-            if custom_msg:
-                notice += f"\r\nСообщение: {custom_msg}"
-
-            delivered = 0
-            saved_offline = 0
-            if target == "all":
-                active = self.session_manager.get_active_users_list()
-                for u in active:
-                    u_email = u["email"]
-                    if u_email.lower() != service_email.lower():
-                        if self._dispatch_service_notice(u_email, service_email, service_name, notice):
-                            delivered += 1
-            else:
-                if self._dispatch_service_notice(target, service_email, service_name, notice):
-                    delivered += 1
-                else:
-                    self.db.save_offline_message(service_email, target, notice)
-                    saved_offline += 1
-
-            self._send_json(writer, {
-                "success": True,
-                "file_id": file_id,
-                "target": target,
-                "delivered_count": delivered,
-                "saved_offline": saved_offline
-            })
-            return
-
-        # 19. Web UI Dashboard (/)
+        # 16. Web UI Dashboard (/)
         if path_lower in ("/", "/index.html", "/admin"):
             html_content = self._render_dashboard(headers=headers)
             resp_headers = {"Content-Type": "text/html; charset=utf-8"}
@@ -966,44 +727,12 @@ class HTTPServer:
             </tr>
             """)
 
-        # Pre-render initial rows for uploaded files table
-        files = self.db.get_all_uploaded_files() if is_admin else []
-        files_rows = []
-        for idx, f in enumerate(files):
-            row_class = ' class="row-alt"' if idx % 2 == 1 else ""
-            f_id = html.escape(f["file_id"])
-            f_name = html.escape(f["original_name"])
-            f_size = self._format_file_size(f["file_size"])
-            f_dl_count = f.get("download_count", 0)
-            f_date = datetime.datetime.fromtimestamp(f["uploaded_at"]).strftime("%d.%m.%Y %H:%M")
-            dl_url = f"http://{self.external_host}:{self.port}/files/{f['file_id']}/{urllib.parse.quote(f['original_name'])}"
-            dl_url_esc = html.escape(dl_url)
-            dl_url_js = dl_url.replace("'", "\\'")
-            f_id_js = f["file_id"].replace("'", "\\'")
-            f_name_js = f["original_name"].replace("'", "\\'")
-
-            files_rows.append(f"""
-            <tr{row_class} id="file-row-{f_id}">
-                <td><strong><a href="{dl_url_esc}" target="_blank" style="color: #000080; text-decoration: underline;" title="Скачать файл">{f_name}</a></strong></td>
-                <td style="color: #444;">{f_size}</td>
-                <td style="color: #555;">{f_date}</td>
-                <td align="center"><strong>{f_dl_count}</strong></td>
-                <td align="center">
-                    <button type="button" class="btn-classic btn-sm" onclick="copyFileLink('{dl_url_js}')" title="Скопировать прямую ссылку на скачивание">Ссылка</button>
-                    <button type="button" class="btn-classic btn-sm" onclick="openSendFileModal('{f_id_js}', '{f_name_js}')" title="Отправить файл пользователю через бота">Отправить</button>
-                    <button type="button" class="btn-classic btn-sm btn-danger" onclick="deleteFile('{f_id_js}')" title="Удалить файл с сервера">Удалить</button>
-                </td>
-            </tr>
-            """)
-
         if is_admin:
             user_rows_html = "\n".join(user_rows) if user_rows else "<tr><td colspan='7' align='center' style='color: #666; padding: 12px;'>В базе данных пока нет зарегистрированных пользователей</td></tr>"
             conn_rows_html = "\n".join(conn_rows) if conn_rows else "<tr><td colspan='6' align='center' style='color: #666; padding: 12px;'>Нет активных подключений в данный момент</td></tr>"
-            files_rows_html = "\n".join(files_rows) if files_rows else "<tr><td colspan='5' align='center' style='color: #666; padding: 15px;'>На сервере пока нет загруженных файлов</td></tr>"
         else:
             user_rows_html = "<tr><td colspan='7' align='center' style='color: #666; padding: 25px;'><strong>Доступ к списку пользователей защищен паролем администратора.</strong><br><br><button type='button' class='btn-classic' onclick='openLoginModal()'>Ввести пароль администратора</button></td></tr>"
             conn_rows_html = "<tr><td colspan='6' align='center' style='color: #666; padding: 20px;'><strong>Доступ к списку подключений защищен паролем администратора.</strong><br><br><button type='button' class='btn-classic' onclick='openLoginModal()'>Ввести пароль администратора</button></td></tr>"
-            files_rows_html = "<tr><td colspan='5' align='center' style='color: #666; padding: 25px;'><strong>Доступ к управлению файлами защищен паролем администратора.</strong><br><br><button type='button' class='btn-classic' onclick='openLoginModal()'>Ввести пароль администратора</button></td></tr>"
 
         service_email = getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local")
         service_name = getattr(config, "SERVICE_ACCOUNT_NAME", "Служба сообщений MSN")
@@ -1323,7 +1052,7 @@ class HTTPServer:
         <div>
             Статус: <strong style="color: #008000;">РАБОТАЕТ</strong> &bull;
             Хост: <strong>{self.external_host}</strong> &bull;
-            Порты: <strong>NS: 1863 | SB: 1864 | FTP: {getattr(config, "MSNFTP_PORT", 1866)} | HTTP: {self.port}</strong> &bull;
+            Порты: <strong>NS: 1863 | SB: 1864 | HTTP: {self.port}</strong> &bull;
             Служебный бот: <strong>{service_name} ({service_email})</strong>
         </div>
         <div id="adminAuthBadge">
@@ -1336,7 +1065,6 @@ class HTTPServer:
         <button type="button" id="tabBtn-reg" class="tab-btn active" onclick="switchTab('reg')">Регистрация</button>
         <button type="button" id="tabBtn-accounts" class="tab-btn" onclick="switchTab('accounts')">Управление учетными записями</button>
         <button type="button" id="tabBtn-alerts" class="tab-btn" onclick="switchTab('alerts')">Оповещения</button>
-        <button type="button" id="tabBtn-files" class="tab-btn" onclick="switchTab('files')">Файлы</button>
         <button type="button" id="tabBtn-server" class="tab-btn" onclick="switchTab('server')">Состояние сервера</button>
     </div>
 
@@ -1545,80 +1273,7 @@ class HTTPServer:
             </table>
         </div>
 
-        <!-- ВКЛАДКА 4: ФАЙЛЫ (MSNFTP & HTTP ХРАНИЛИЩЕ) -->
-        <div id="pane-files" class="tab-pane">
-            <table width="100%" border="0" cellspacing="0" cellpadding="0">
-                <tr valign="top">
-                    <!-- Левая колонка: Загрузка файла и отправка -->
-                    <td width="42%" style="padding-right: 12px;">
-                        <fieldset>
-                            <legend>Загрузка файла в хранилище сервера</legend>
-                            <form id="fileUploadForm" onsubmit="event.preventDefault(); submitFileUpload();">
-                                <table width="100%" border="0" cellspacing="4" cellpadding="2">
-                                    <tr>
-                                        <td width="25%"><b>Файл:</b></td>
-                                        <td width="75%">
-                                            <input type="file" id="uploadFileInput" class="text-input" style="width: 100%;" required>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td></td>
-                                        <td style="padding-top: 6px;">
-                                            <button type="submit" id="btnUploadSubmit" class="btn-classic">Загрузить на сервер</button>
-                                            <span id="uploadLoadingSpinner" style="display: none; margin-left: 8px; color: #555;">Загрузка...</span>
-                                        </td>
-                                    </tr>
-                                </table>
-                                <div id="uploadStatusMsg" class="status-msg"></div>
-                            </form>
-                        </fieldset>
-
-                        <fieldset>
-                            <legend>Передача файлов в сети MSN</legend>
-                            <div style="line-height: 1.4; color: #333333;">
-                                &bull; <strong>Клиент-клиент (P2P / MSNFTP Relay):</strong> Передача файлов через IM-клиенты (Gaim, Trillian, MSN Messenger) работает напрямую через порт <code>{getattr(config, 'MSNFTP_PORT', 1866)}</code>. Сервер автоматически транслирует NAT и локальные IP-адреса.<br>
-                                &bull; <strong>Публичные загрузки:</strong> Пользователи могут мгновенно скачивать отправленные файлы по прямой ссылке <code>/files/&lt;id&gt;/&lt;имя&gt;</code> без авторизации.<br>
-                                &bull; <strong>Отправка от бота:</strong> Нажмите «Отправить» возле любого файла, чтобы бот <code>{service_email}</code> прислал ссылку в чат конкретному пользователю или всем пользователям онлайн.
-                            </div>
-                        </fieldset>
-                    </td>
-
-                    <!-- Правая колонка: Таблица файлов -->
-                    <td width="58%">
-                        <fieldset>
-                            <legend>Хранилище файлов</legend>
-                            <table width="100%" border="0" cellspacing="0" cellpadding="2" style="margin-bottom: 6px;">
-                                <tr>
-                                    <td>
-                                        <button type="button" class="btn-classic" onclick="refreshFilesList()">Обновить список</button>
-                                    </td>
-                                    <td align="right">
-                                        <span id="filesCounter" style="font-weight: bold; color: #333;">Всего файлов: {len(files)}</span>
-                                    </td>
-                                </tr>
-                            </table>
-
-                            <table class="data-table" id="filesTable">
-                                <thead>
-                                    <tr>
-                                        <th width="38%">Имя файла</th>
-                                        <th width="16%">Размер</th>
-                                        <th width="20%">Дата загрузки</th>
-                                        <th width="10%" style="text-align: center;">Скачиваний</th>
-                                        <th width="16%" style="text-align: center;">Действия</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="filesTableBody">
-                                    {files_rows_html}
-                                </tbody>
-                            </table>
-                        </fieldset>
-                    </td>
-                </tr>
-            </table>
-        </div>
-
-        <!-- ВКЛАДКА 5: СОСТОЯНИЕ СЕРВЕРА -->
+        <!-- ВКЛАДКА 4: СОСТОЯНИЕ СЕРВЕРА -->
         <div id="pane-server" class="tab-pane">
             <fieldset>
                 <legend>Статус служб и производительность сервера</legend>
@@ -1883,48 +1538,6 @@ class HTTPServer:
     </div>
 </div>
 
-<!-- Модальное окно: Отправка файла пользователю -->
-<div id="sendFileModal" class="modal-overlay">
-    <div class="modal-dialog" style="max-width: 440px;">
-        <div class="modal-titlebar">
-            <span>Отправка файла пользователю</span>
-            <div class="modal-close-btn" onclick="closeModal('sendFileModal')">&times;</div>
-        </div>
-        <div class="modal-body">
-            <p style="margin-top: 0;">Файл: <strong id="modalSendFileName"></strong></p>
-            <input type="hidden" id="modalSendFileId" value="">
-            <table width="100%" border="0" cellspacing="2" cellpadding="2">
-                <tr>
-                    <td width="30%"><b>Получатель:</b></td>
-                    <td width="70%">
-                        <select id="modalSendFileTarget" class="text-input" style="width: 100%;" onchange="onSendFileTargetChange()">
-                            <option value="all">Всем пользователям онлайн</option>
-                            <option value="custom">Конкретному пользователю...</option>
-                        </select>
-                    </td>
-                </tr>
-                <tr id="modalSendFileCustomRow" style="display: none;">
-                    <td><b>Email:</b></td>
-                    <td>
-                        <input type="text" id="modalSendFileEmail" class="text-input" style="width: 100%;" placeholder="user@msn.local">
-                    </td>
-                </tr>
-                <tr valign="top">
-                    <td style="padding-top: 4px;"><b>Сообщение:</b></td>
-                    <td style="padding-top: 4px;">
-                        <textarea id="modalSendFileComment" class="text-input" rows="3" style="width: 100%;" placeholder="Необязательное сопроводительное сообщение..."></textarea>
-                    </td>
-                </tr>
-            </table>
-            <div id="modalSendFileStatus" class="status-msg"></div>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="btn-classic" onclick="submitSendFile()">Отправить</button>
-            <button type="button" class="btn-classic" onclick="closeModal('sendFileModal')" style="margin-left: 4px;">Отмена</button>
-        </div>
-    </div>
-</div>
-
 <script type="text/javascript">
     var isAdminLoggedIn = {'true' if is_admin else 'false'};
     var currentTargetEmail = '';
@@ -1979,8 +1592,6 @@ class HTTPServer:
                 var activePane = document.querySelector('.tab-pane.active');
                 if (activePane && activePane.id === 'pane-accounts') {{
                     refreshAccountsList();
-                }} else if (activePane && activePane.id === 'pane-files') {{
-                    refreshFilesList();
                 }} else if (activePane && activePane.id === 'pane-server') {{
                     refreshServerStatus();
                 }}
@@ -2009,8 +1620,6 @@ class HTTPServer:
         switchTab('reg');
         var tb = document.getElementById('usersTableBody');
         if (tb) tb.innerHTML = '<tr><td colspan="7" align="center" style="color: #666; padding: 25px;"><strong>Доступ к списку пользователей защищен паролем администратора.</strong><br><br><button type="button" class="btn-classic" onclick="openLoginModal()">Ввести пароль администратора</button></td></tr>';
-        var fb = document.getElementById('filesTableBody');
-        if (fb) fb.innerHTML = '<tr><td colspan="5" align="center" style="color: #666; padding: 25px;"><strong>Доступ к управлению файлами защищен паролем администратора.</strong><br><br><button type="button" class="btn-classic" onclick="openLoginModal()">Ввести пароль администратора</button></td></tr>';
         var cb = document.getElementById('connectionsTableBody');
         if (cb) cb.innerHTML = '<tr><td colspan="6" align="center" style="color: #666; padding: 20px;"><strong>Доступ к списку подключений защищен паролем администратора.</strong><br><br><button type="button" class="btn-classic" onclick="openLoginModal()">Ввести пароль администратора</button></td></tr>';
     }}
@@ -2035,7 +1644,6 @@ class HTTPServer:
                 if (data.authenticated) {{
                     var hash = location.hash.replace('#', '');
                     if (hash === 'accounts') refreshAccountsList();
-                    else if (hash === 'files') refreshFilesList();
                     else if (hash === 'server') refreshServerStatus();
                 }}
             }}
@@ -2048,7 +1656,7 @@ class HTTPServer:
             openLoginModal();
             return;
         }}
-        var tabs = ['reg', 'accounts', 'alerts', 'files', 'server'];
+        var tabs = ['reg', 'accounts', 'alerts', 'server'];
         for (var i = 0; i < tabs.length; i++) {{
             var t = tabs[i];
             var btn = document.getElementById('tabBtn-' + t);
@@ -2066,8 +1674,6 @@ class HTTPServer:
         location.hash = '#' + tabId;
         if (tabId === 'accounts') {{
             refreshAccountsList();
-        }} else if (tabId === 'files') {{
-            refreshFilesList();
         }} else if (tabId === 'server') {{
             refreshServerStatus();
         }}
@@ -2077,7 +1683,7 @@ class HTTPServer:
     window.addEventListener('DOMContentLoaded', function() {{
         checkAdminStatus();
         var hash = location.hash.replace('#', '');
-        if (hash === 'accounts' || hash === 'server' || hash === 'reg' || hash === 'alerts' || hash === 'files') {{
+        if (hash === 'accounts' || hash === 'server' || hash === 'reg' || hash === 'alerts') {{
             switchTab(hash);
         }}
     }});
@@ -2695,220 +2301,6 @@ class HTTPServer:
                     refreshServerStatus();
                 }}
             }}, 5000);
-        }}
-    }}
-
-    // Files Management Functions
-    function copyFileLink(url) {{
-        if (navigator.clipboard && navigator.clipboard.writeText) {{
-            navigator.clipboard.writeText(url).then(function() {{
-                alert('Прямая ссылка на файл скопирована в буфер обмена:\n' + url);
-            }}).catch(function() {{
-                prompt('Скопируйте ссылку на файл:', url);
-            }});
-        }} else {{
-            prompt('Скопируйте ссылку на файл:', url);
-        }}
-    }}
-
-    async function submitFileUpload() {{
-        var fileInp = document.getElementById('uploadFileInput');
-        var msgBox = document.getElementById('uploadStatusMsg');
-        var btnSubmit = document.getElementById('btnUploadSubmit');
-        var spinner = document.getElementById('uploadLoadingSpinner');
-        if (msgBox) msgBox.style.display = 'none';
-
-        if (!fileInp || !fileInp.files || fileInp.files.length === 0) {{
-            if (msgBox) {{
-                msgBox.textContent = 'Пожалуйста, выберите файл для загрузки';
-                msgBox.className = 'status-msg msg-error';
-                msgBox.style.display = 'block';
-            }}
-            return;
-        }}
-
-        var file = fileInp.files[0];
-        var formData = new FormData();
-        formData.append('file', file);
-
-        if (btnSubmit) btnSubmit.disabled = true;
-        if (spinner) spinner.style.display = 'inline';
-
-        try {{
-            var res = await adminFetch('/api/files/upload', {{
-                method: 'POST',
-                body: formData
-            }});
-            var data = await res.json();
-            if (res.ok && data.success) {{
-                if (msgBox) {{
-                    msgBox.textContent = 'Файл ' + escapeHtml(data.file.original_name) + ' успешно загружен!';
-                    msgBox.className = 'status-msg msg-success';
-                    msgBox.style.display = 'block';
-                }}
-                fileInp.value = '';
-                refreshFilesList();
-            }} else {{
-                if (msgBox) {{
-                    msgBox.textContent = data.error || 'Ошибка загрузки файла';
-                    msgBox.className = 'status-msg msg-error';
-                    msgBox.style.display = 'block';
-                }}
-            }}
-        }} catch (err) {{
-            if (msgBox) {{
-                msgBox.textContent = 'Ошибка сети: ' + err.message;
-                msgBox.className = 'status-msg msg-error';
-                msgBox.style.display = 'block';
-            }}
-        }} finally {{
-            if (btnSubmit) btnSubmit.disabled = false;
-            if (spinner) spinner.style.display = 'none';
-        }}
-    }}
-
-    async function refreshFilesList() {{
-        try {{
-            var res = await adminFetch('/api/files');
-            if (!res.ok) return;
-            var data = await res.json();
-            var files = data.files || [];
-            var tbody = document.getElementById('filesTableBody');
-            var counter = document.getElementById('filesCounter');
-            if (counter) counter.textContent = 'Всего файлов: ' + files.length;
-            if (!tbody) return;
-
-            var rows = [];
-            for (var i = 0; i < files.length; i++) {{
-                var f = files[i];
-                var isAlt = (i % 2 === 1) ? ' class="row-alt"' : '';
-                var fIdEsc = escapeHtml(f.file_id);
-                var fNameEsc = escapeHtml(f.original_name);
-                var fSizeEsc = escapeHtml(f.formatted_size || '');
-                var fDateEsc = escapeHtml(f.date_str || '');
-                var dlCount = f.download_count || 0;
-                var dlUrl = f.download_url || '';
-                var dlUrlEsc = escapeHtml(dlUrl);
-                var dlUrlJs = dlUrl.replace(/'/g, "\\'");
-                var fIdJs = f.file_id.replace(/'/g, "\\'");
-                var fNameJs = (f.original_name || '').replace(/'/g, "\\'");
-
-                rows.push(
-                    '<tr' + isAlt + ' id="file-row-' + fIdEsc + '">' +
-                    '<td><strong><a href="' + dlUrlEsc + '" target="_blank" style="color: #000080; text-decoration: underline;" title="Скачать файл">' + fNameEsc + '</a></strong></td>' +
-                    '<td style="color: #444;">' + fSizeEsc + '</td>' +
-                    '<td style="color: #555;">' + fDateEsc + '</td>' +
-                    '<td align="center"><strong>' + dlCount + '</strong></td>' +
-                    '<td align="center">' +
-                        '<button type="button" class="btn-classic btn-sm" onclick="copyFileLink(\\'' + dlUrlJs + '\\')" title="Скопировать прямую ссылку на скачивание">Ссылка</button> ' +
-                        '<button type="button" class="btn-classic btn-sm" onclick="openSendFileModal(\\'' + fIdJs + '\\', \\'' + fNameJs + '\\')" title="Отправить файл пользователю через бота">Отправить</button> ' +
-                        '<button type="button" class="btn-classic btn-sm btn-danger" onclick="deleteFile(\\'' + fIdJs + '\\')" title="Удалить файл с сервера">Удалить</button>' +
-                    '</td>' +
-                    '</tr>'
-                );
-            }}
-
-            if (rows.length === 0) {{
-                tbody.innerHTML = '<tr><td colspan="5" align="center" style="color: #666; padding: 15px;">На сервере пока нет загруженных файлов</td></tr>';
-            }} else {{
-                tbody.innerHTML = rows.join('');
-            }}
-        }} catch (e) {{
-            console.error('Error refreshing files list:', e);
-        }}
-    }}
-
-    async function deleteFile(fileId) {{
-        if (!confirm('Вы действительно хотите удалить этот файл с сервера?')) return;
-        try {{
-            var res = await adminFetch('/api/files/delete', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{ file_id: fileId }})
-            }});
-            var data = await res.json();
-            if (res.ok && data.success) {{
-                refreshFilesList();
-            }} else {{
-                alert(data.error || 'Не удалось удалить файл');
-            }}
-        }} catch (err) {{
-            alert('Ошибка сети: ' + err.message);
-        }}
-    }}
-
-    function openSendFileModal(fileId, fileName) {{
-        document.getElementById('modalSendFileId').value = fileId;
-        document.getElementById('modalSendFileName').textContent = fileName;
-        document.getElementById('modalSendFileComment').value = '';
-        document.getElementById('modalSendFileEmail').value = '';
-        document.getElementById('modalSendFileTarget').value = 'all';
-        document.getElementById('modalSendFileCustomRow').style.display = 'none';
-        var msgBox = document.getElementById('modalSendFileStatus');
-        if (msgBox) {{
-            msgBox.style.display = 'none';
-            msgBox.className = 'status-msg';
-        }}
-        document.getElementById('sendFileModal').style.display = 'flex';
-    }}
-
-    function onSendFileTargetChange() {{
-        var val = document.getElementById('modalSendFileTarget').value;
-        document.getElementById('modalSendFileCustomRow').style.display = (val === 'custom') ? '' : 'none';
-    }}
-
-    async function submitSendFile() {{
-        var fileId = document.getElementById('modalSendFileId').value;
-        var targetVal = document.getElementById('modalSendFileTarget').value;
-        var target = targetVal;
-        var msgBox = document.getElementById('modalSendFileStatus');
-        if (msgBox) msgBox.style.display = 'none';
-
-        if (targetVal === 'custom') {{
-            target = document.getElementById('modalSendFileEmail').value.trim();
-            if (!target) {{
-                if (msgBox) {{
-                    msgBox.textContent = 'Укажите email пользователя!';
-                    msgBox.className = 'status-msg msg-error';
-                    msgBox.style.display = 'block';
-                }}
-                return;
-            }}
-        }}
-
-        var comment = document.getElementById('modalSendFileComment').value.trim();
-
-        try {{
-            var res = await adminFetch('/api/files/send', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{
-                    file_id: fileId,
-                    target: target,
-                    message: comment
-                }})
-            }});
-            var data = await res.json();
-            if (res.ok && data.success) {{
-                if (msgBox) {{
-                    msgBox.textContent = 'Файл успешно отправлен! Доставлено пользователям: ' + (data.delivered_count || 0);
-                    msgBox.className = 'status-msg msg-success';
-                    msgBox.style.display = 'block';
-                }}
-                setTimeout(function() {{ closeModal('sendFileModal'); }}, 1000);
-            }} else {{
-                if (msgBox) {{
-                    msgBox.textContent = data.error || 'Ошибка при отправке файла';
-                    msgBox.className = 'status-msg msg-error';
-                    msgBox.style.display = 'block';
-                }}
-            }}
-        }} catch (err) {{
-            if (msgBox) {{
-                msgBox.textContent = 'Ошибка сети: ' + err.message;
-                msgBox.className = 'status-msg msg-error';
-                msgBox.style.display = 'block';
-            }}
         }}
     }}
 </script>
