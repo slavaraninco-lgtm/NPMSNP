@@ -21,6 +21,7 @@ from protocol.sb_handler import SBClientHandler
 from services.session_manager import SessionManager
 from services.switchboard_manager import SwitchboardManager
 from services.http_server import HTTPServer
+from services.msnftp_relay import MSNFTPRelayServer
 
 
 def setup_logging(debug: bool = False) -> None:
@@ -32,12 +33,15 @@ def setup_logging(debug: bool = False) -> None:
 class MSNPServer:
     def __init__(self, bind_host: str = config.BIND_HOST, external_host: str = config.EXTERNAL_HOST,
                  ns_port: int = config.NS_PORT, sb_port: int = config.SB_PORT,
-                 http_port: int = config.HTTP_PORT, db_path: str = config.DB_PATH):
+                 http_port: int = config.HTTP_PORT,
+                 msnftp_port: int = getattr(config, "MSNFTP_PORT", 1866),
+                 db_path: str = config.DB_PATH):
         self.bind_host = bind_host
         self.external_host = external_host
         self.ns_port = ns_port
         self.sb_port = sb_port
         self.http_port = http_port
+        self.msnftp_port = msnftp_port
         self.db_path = db_path
 
         # Core Components
@@ -46,6 +50,11 @@ class MSNPServer:
         self.session_manager = SessionManager(self.db)
         self.switchboard_manager = SwitchboardManager(self.auth_manager)
         self.db.ensure_service_account(config.SERVICE_ACCOUNT_EMAIL, config.SERVICE_ACCOUNT_NAME)
+        self.msnftp_relay = MSNFTPRelayServer(
+            bind_host=self.bind_host,
+            port=self.msnftp_port,
+            external_host=self.external_host
+        )
         self.http_server = HTTPServer(
             host=self.bind_host,
             port=self.http_port,
@@ -54,7 +63,8 @@ class MSNPServer:
             auth_manager=self.auth_manager,
             session_manager=self.session_manager,
             switchboard_manager=self.switchboard_manager,
-            auto_register=config.AUTO_REGISTER_UNKNOWN_USERS
+            auto_register=config.AUTO_REGISTER_UNKNOWN_USERS,
+            msnftp_relay=self.msnftp_relay
         )
 
         self._ns_server = None
@@ -86,6 +96,8 @@ class MSNPServer:
             switchboard_manager=self.switchboard_manager,
             external_host=self.external_host,
             sb_port=self.sb_port,
+            msnftp_relay=self.msnftp_relay,
+            http_port=self.http_port,
         )
         await handler.run()
 
@@ -104,6 +116,9 @@ class MSNPServer:
         )
         logging.info(f"Switchboard Server (SB) listening on {self.bind_host}:{self.sb_port}")
 
+        # Start MSNFTP Relay Server
+        await self.msnftp_relay.start()
+
         # Start HTTP / Nexus / Web Admin Server
         await self.http_server.start()
 
@@ -112,6 +127,7 @@ class MSNPServer:
         print("=" * 65)
         print(f"  * Notification Server (NS): {self.external_host}:{self.ns_port}")
         print(f"  * Switchboard Server  (SB): {self.external_host}:{self.sb_port}")
+        print(f"  * MSNFTP Relay / Files    : {self.external_host}:{self.msnftp_port}")
         print(f"  * Web Dashboard / HTTP    : http://{self.external_host}:{self.http_port}/")
         print(f"  * SQLite Database         : {os.path.abspath(self.db_path)}")
         print("=" * 65 + "\n")
@@ -132,6 +148,7 @@ class MSNPServer:
             self._sb_server.close()
             await self._sb_server.wait_closed()
 
+        await self.msnftp_relay.stop()
         await self.http_server.stop()
         logging.info("MSNP Server stopped successfully.")
 
@@ -143,6 +160,7 @@ def main() -> None:
     parser.add_argument("--ns-port", type=int, default=config.NS_PORT, help="Notification Server port")
     parser.add_argument("--sb-port", type=int, default=config.SB_PORT, help="Switchboard Server port")
     parser.add_argument("--http-port", type=int, default=config.HTTP_PORT, help="HTTP/Web Dashboard port")
+    parser.add_argument("--msnftp-port", type=int, default=getattr(config, "MSNFTP_PORT", 1866), help="MSNFTP Relay port")
     parser.add_argument("--db", default=config.DB_PATH, help="Path to database.db")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
@@ -155,6 +173,7 @@ def main() -> None:
         ns_port=args.ns_port,
         sb_port=args.sb_port,
         http_port=args.http_port,
+        msnftp_port=args.msnftp_port,
         db_path=args.db,
     )
 

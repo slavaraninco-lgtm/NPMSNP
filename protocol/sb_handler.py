@@ -11,6 +11,11 @@ Handles chat conversations, caller-callee rendezvous, messaging, and typing noti
 """
 import asyncio
 import logging
+import os
+import re
+import time
+import urllib.parse
+import uuid
 from typing import Optional, List, Dict, Any
 
 import config
@@ -23,13 +28,18 @@ from services.switchboard_manager import SwitchboardManager, SwitchboardRoom
 
 logger = logging.getLogger("MSNP.SBHandler")
 
+# Global tracking for active MSNFTP invitations across switchboard sessions
+_active_ft_invitations: Dict[str, dict] = {}
+
 
 class SBClientHandler:
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                  db: Database, auth_manager: AuthManager,
                  session_manager: SessionManager, switchboard_manager: SwitchboardManager,
                  external_host: str = config.EXTERNAL_HOST,
-                 sb_port: int = config.SB_PORT):
+                 sb_port: int = config.SB_PORT,
+                 msnftp_relay: Optional[Any] = None,
+                 http_port: int = getattr(config, "HTTP_PORT", 1865)):
         self.reader = reader
         self.writer = writer
         self.db = db
@@ -38,6 +48,8 @@ class SBClientHandler:
         self.switchboard_manager = switchboard_manager
         self.external_host = external_host
         self.sb_port = sb_port
+        self.msnftp_relay = msnftp_relay
+        self.http_port = http_port
 
         self.msnp_reader = MSNPReader()
         self.peername = writer.get_extra_info("peername") or ("0.0.0.0", 0)
@@ -118,6 +130,12 @@ class SBClientHandler:
     # Command Dispatcher
     async def _handle_command(self, cmd: str, args: List[str], payload: Optional[bytes]) -> None:
         logger.debug(f">>> SB {cmd} {' '.join(args)}{' [payload ' + str(len(payload)) + 'b]' if payload else ''}")
+        if payload and logger.isEnabledFor(logging.DEBUG):
+            try:
+                preview = payload.decode("utf-8", errors="replace")[:250].strip()
+                logger.debug(f">>> SB payload preview: {preview}")
+            except Exception:
+                pass
         method_name = f"_cmd_{cmd.lower()}"
         method = getattr(self, method_name, None)
         if method:
@@ -362,6 +380,31 @@ class SBClientHandler:
                     body_text = text_content.split("\r\n\r\n", 1)[1]
                 self.db.save_offline_message(self.email, target, body_text.strip())
 
+        # Inspect and process MSNFTP file transfer invitations
+        if payload and b"text/x-msmsgsinvite" in payload:
+            processed = await self._process_file_transfer_payload(payload)
+            if processed is None:
+                # The invitation was auto-accepted or handled internally by the server
+                return
+            payload = processed
+
+        # Handle Gaim MSNSLP P2P file transfers if recipient is Trillian
+        if payload and b"application/x-msnmsgrp2p" in payload:
+            if b"{5D3E02AB-6190-11D3-BBBB-00C04F795683}" in payload or b"INVITE MSNMSGR:" in payload:
+                if self.room:
+                    for p in self.room.get_participants():
+                        if p.email.lower() != self.email.lower():
+                            ns = self.session_manager.get_session(p.email)
+                            capp = getattr(ns, "client_app", "").lower() if ns else ""
+                            if "trillian" in capp:
+                                notice = (
+                                    f"Пользователь {p.friendly_name} использует Trillian, который не поддерживает "
+                                    f"прямую передачу файлов P2P. Для отправки файлов воспользуйтесь веб-интерфейсом: "
+                                    f"http://{self.external_host}:{self.http_port}/"
+                                )
+                                self.send_service_notice(notice)
+                                break
+
         # Relay message to everyone else in this chat room (skipping banned users)
         blocked = self.switchboard_manager.broadcast_message(
             self.session_id, self.email, self.friendly_name, payload, db=self.db
@@ -373,6 +416,201 @@ class SBClientHandler:
                     f"Сообщение не доставлено: пользователь {b_user} заблокирован администрацией.",
                     self.session_manager, self.external_host, self.sb_port
                 )
+
+    async def _process_file_transfer_payload(self, payload: bytes) -> Optional[bytes]:
+        """Inspects and rewrites MSNFTP file transfer invitation parameters for NAT traversal and cross-client bridging."""
+        try:
+            text = payload.decode("utf-8", errors="replace")
+
+            # 1. Primary Invitation from Sender (e.g. Trillian)
+            if "Invitation-Command: INVITE" in text:
+                cookie_match = re.search(r"Invitation-Cookie:\s*(\d+)", text)
+                file_match = re.search(r"Application-File:\s*([^\r\n]+)", text)
+                size_match = re.search(r"Application-FileSize:\s*(\d+)", text)
+
+                cookie = cookie_match.group(1).strip() if cookie_match else ""
+                filename = file_match.group(1).strip() if file_match else "file.bin"
+                filesize = int(size_match.group(1).strip()) if size_match else 0
+
+                ft_info = {
+                    "cookie": cookie,
+                    "sender_email": self.email,
+                    "sender_name": self.friendly_name,
+                    "sender_host": self.peername[0],
+                    "filename": filename,
+                    "filesize": filesize,
+                    "created_at": time.time(),
+                    "auto_accepted": False,
+                    "receiver_email": "",
+                    "receiver_name": "",
+                }
+                _active_ft_invitations[cookie] = ft_info
+
+                # Check if recipient in the room is Gaim (or cannot handle MSNFTP)
+                if self.room:
+                    other_participants = [p for p in self.room.get_participants() if p.email.lower() != self.email.lower()]
+                    if other_participants:
+                        target = other_participants[0]
+                        ns = self.session_manager.get_session(target.email)
+                        client_app = getattr(ns, "client_app", "").lower() if ns else ""
+                        is_gaim = any(x in client_app for x in ("gaim", "pidgin", "libpurple")) or ("trillian" not in client_app and "msmsgs" not in client_app)
+
+                        if is_gaim:
+                            # Recipient Gaim cannot process text/x-msmsgsinvite!
+                            # Auto-accept on behalf of Gaim so sender proceeds with MSNFTP transfer
+                            ft_info["auto_accepted"] = True
+                            ft_info["receiver_email"] = target.email
+                            ft_info["receiver_name"] = target.friendly_name
+
+                            accept_payload = (
+                                "MIME-Version: 1.0\r\n"
+                                "Content-Type: text/x-msmsgsinvite; charset=UTF-8\r\n\r\n"
+                                "Invitation-Command: ACCEPT\r\n"
+                                f"Invitation-Cookie: {cookie}\r\n"
+                                "Launch-Application: FALSE\r\n"
+                                "Request-Data: IP-Address:\r\n"
+                            ).encode("utf-8")
+                            self.send_cmd("MSG", target.email, target.friendly_name or target.email, payload=accept_payload)
+                            logger.info(f"Auto-accepted MSNFTP invite for '{filename}' ({filesize}b) on behalf of Gaim user {target.email}")
+                            return None
+
+            # 2. Sender supplying connection parameters (IP-Address, Port, AuthCookie)
+            elif "Invitation-Command: ACCEPT" in text and "IP-Address:" in text:
+                cookie_match = re.search(r"Invitation-Cookie:\s*(\d+)", text)
+                ip_match = re.search(r"IP-Address:\s*([^\r\n]+)", text)
+                port_match = re.search(r"Port:\s*(\d+)", text)
+                auth_match = re.search(r"AuthCookie:\s*(\w+)", text)
+
+                cookie = cookie_match.group(1).strip() if cookie_match else ""
+                orig_ip = ip_match.group(1).strip() if ip_match else ""
+                orig_port = int(port_match.group(1).strip()) if port_match else 0
+                auth_cookie = auth_match.group(1).strip() if auth_match else ""
+
+                ft_info = _active_ft_invitations.get(cookie, {})
+                sender_ip = self.peername[0]
+
+                # If this transfer was auto-accepted by the server (for Gaim/web delivery)
+                if ft_info.get("auto_accepted"):
+                    logger.info(f"Connecting to sender {sender_ip}:{orig_port} to download file for Gaim recipient...")
+                    asyncio.create_task(self._download_and_share_file(
+                        sender_host=sender_ip,
+                        sender_port=orig_port,
+                        auth_cookie=auth_cookie,
+                        ft_info=ft_info
+                    ))
+                    return None
+
+                # Otherwise, standard client-to-client transfer (e.g. Trillian to Trillian)
+                if self.msnftp_relay:
+                    self.msnftp_relay.register_session(
+                        sender_email=self.email,
+                        receiver_email=ft_info.get("receiver_email", ""),
+                        auth_cookie=auth_cookie,
+                        file_name=ft_info.get("filename", ""),
+                        file_size=ft_info.get("filesize", 0),
+                        sender_host=sender_ip,
+                        sender_port=orig_port,
+                    )
+
+                # NAT Traversal rewrite
+                if getattr(config, "ENABLE_MSNFTP_NAT_REWRITE", True):
+                    new_ip = self.external_host
+                    new_port = getattr(config, "MSNFTP_PORT", 1866)
+                    text = re.sub(r"IP-Address:\s*[^\r\n]+", f"IP-Address: {new_ip}", text)
+                    text = re.sub(r"Port:\s*\d+", f"Port: {new_port}", text)
+                    return text.encode("utf-8")
+
+            # 3. Handle Cancel / Reject
+            elif "Invitation-Command: CANCEL" in text:
+                cookie_match = re.search(r"Invitation-Cookie:\s*(\d+)", text)
+                if cookie_match:
+                    _active_ft_invitations.pop(cookie_match.group(1).strip(), None)
+
+        except Exception as ex:
+            logger.warning(f"Error processing MSNFTP invitation: {ex}", exc_info=True)
+        return payload
+
+    async def _download_and_share_file(self, sender_host: str, sender_port: int,
+                                       auth_cookie: str, ft_info: dict) -> None:
+        """
+        Downloads a file from an MSNFTP sender and delivers it to the room chat with a public download link.
+        """
+        filename = ft_info.get("filename", "file.bin")
+        filesize = ft_info.get("filesize", 0)
+        sender_email = ft_info.get("sender_email", self.email)
+        sender_name = ft_info.get("sender_name", self.friendly_name)
+        receiver_email = ft_info.get("receiver_email", "")
+
+        if not self.msnftp_relay:
+            logger.warning("No MSNFTP relay available to download file.")
+            return
+
+        file_bytes = await self.msnftp_relay.receive_file_from_sender(
+            sender_host=sender_host,
+            sender_port=sender_port,
+            auth_cookie=auth_cookie,
+            receiver_email=receiver_email or "user@msn.local",
+            file_name=filename,
+            file_size=filesize
+        )
+
+        if not file_bytes:
+            logger.warning(f"Failed to receive file '{filename}' from sender {sender_host}:{sender_port}")
+            return
+
+        # Save to disk
+        file_id = uuid.uuid4().hex[:12]
+        storage_dir = getattr(config, "FILES_STORAGE_DIR", os.path.join(config.BASE_DIR, "storage", "files"))
+        os.makedirs(storage_dir, exist_ok=True)
+        safe_name = os.path.basename(filename)
+        stored_name = f"{file_id}_{safe_name}"
+        file_path = os.path.join(storage_dir, stored_name)
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+
+        # Save to database
+        self.db.save_uploaded_file(
+            file_id=file_id,
+            original_name=safe_name,
+            stored_name=stored_name,
+            file_size=len(file_bytes),
+            uploaded_by=sender_email
+        )
+        logger.info(f"Saved received file {safe_name} ({len(file_bytes)}b) with file_id={file_id}")
+
+        # Human-readable size
+        size_bytes = len(file_bytes)
+        if size_bytes < 1024:
+            size_str = f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            size_str = f"{size_bytes / 1024:.1f} KB"
+        else:
+            size_str = f"{size_bytes / (1024 * 1024):.1f} MB"
+
+        http_port = getattr(self, "http_port", getattr(config, "HTTP_PORT", 1865))
+        download_url = f"http://{self.external_host}:{http_port}/files/{file_id}/{urllib.parse.quote(safe_name)}"
+
+        chat_msg = (
+            f"📎 [Файл от {sender_name}]: {safe_name} ({size_str})\r\n"
+            f"Скачать: {download_url}"
+        )
+
+        # Broadcast download message into room
+        service_email = getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local")
+        service_name = getattr(config, "SERVICE_ACCOUNT_NAME", "Служба сообщений MSN")
+        payload = (
+            "MIME-Version: 1.0\r\n"
+            "Content-Type: text/plain; charset=UTF-8\r\n"
+            "X-MMS-IM-Format: FN=Tahoma; EF=; CO=0; CS=0; PF=0\r\n\r\n"
+            f"{chat_msg}\r\n"
+        ).encode("utf-8")
+
+        if self.session_id:
+            self.switchboard_manager.broadcast_message(
+                self.session_id, service_email, service_name, payload, db=self.db
+            )
+            # Also send confirmation into sender's chat window
+            self.send_msg_relay(service_email, service_name, payload)
 
     async def _cmd_not(self, args: List[str], payload: Optional[bytes]) -> None:
         # NOT len\r\n<payload> (Typing notification)
