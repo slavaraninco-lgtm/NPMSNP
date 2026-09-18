@@ -19,7 +19,7 @@ class ProtocolVersion(str, Enum):
 
 
 SUPPORTED_DIALECTS = [
-    "MSNP12", "MSNP11", "MSNP10", "MSNP9", "MSNP8",
+    "MSNP9", "MSNP8", "MSNP10", "MSNP11", "MSNP12",
     "MSNP7", "MSNP6", "MSNP5", "MSNP4", "MSNP3", "MSNP2"
 ]
 

@@ -15,7 +15,7 @@ from typing import Optional, List, Dict, Any
 
 import config
 from db.database import Database
-from protocol.constants import MSNPError
+from protocol.constants import MSNPError, SUPPORTED_DIALECTS
 from protocol.packet import MSNPReader, MSNPWriter, encode_arg
 from protocol.auth import AuthManager
 from services.session_manager import SessionManager
@@ -130,9 +130,41 @@ class SBClientHandler:
         else:
             logger.warning(f"Unhandled SB command: {cmd} args={args}")
             trid = args[0] if args else "0"
+            if cmd in ("CHL", "PNG", "QNG", "NOT", "UUN", "UUM"):
+                return
             self.send_error(MSNPError.SYNTAX_ERROR, trid)
 
     # Handlers
+
+    async def _cmd_ver(self, args: List[str], payload: Optional[bytes]) -> None:
+        # VER trid MSNP9 MSNP8 CVR0
+        if not args:
+            return
+        trid = args[0]
+        offered = [a.upper() for a in args[1:]]
+        chosen = "MSNP9"
+        for d in SUPPORTED_DIALECTS:
+            if d in offered:
+                chosen = d
+                break
+        resp_args = [chosen]
+        for a in offered:
+            if a.startswith("CVR"):
+                resp_args.append(a)
+                break
+        self.send_cmd("VER", trid, *resp_args)
+
+    async def _cmd_cvr(self, args: List[str], payload: Optional[bytes]) -> None:
+        trid = args[0] if args else "1"
+        ver = "6.0.0602"
+        url = f"http://{self.external_host}:{self.http_port}/"
+        self.send_cmd("CVR", trid, ver, ver, ver, url, url)
+
+    async def _cmd_png(self, args: List[str], payload: Optional[bytes]) -> None:
+        self.send_cmd("QNG", 60)
+
+    async def _cmd_out(self, args: List[str], payload: Optional[bytes]) -> None:
+        self.close()
 
     async def _cmd_usr(self, args: List[str], payload: Optional[bytes]) -> None:
         # Caller connects: USR trid caller_email cookie

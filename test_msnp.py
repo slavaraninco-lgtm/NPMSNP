@@ -897,6 +897,79 @@ class TestEndToEndIntegration(unittest.IsolatedAsyncioTestCase):
 
         await client.close()
 
+    async def test_im2_client_handshake_and_sb_ver(self):
+        """Tests IM2 / third-party client handshake with CVR0 echoing and SB VER support."""
+        client = await self._connect_client(self.ns_port)
+        # 1. IM2 sends exact command from screenshot: VER 0 MSNP9 MSNP8 MSNP7 CVR0
+        await client.send("VER 0 MSNP9 MSNP8 MSNP7 CVR0\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "VER")
+        self.assertEqual(args[0], "0")
+        self.assertEqual(args[1], "MSNP9")
+        self.assertEqual(args[2], "CVR0")  # CVR0 must be echoed!
+
+        # 2. IM2 sends CVR
+        await client.send("CVR 1 0x0409 winnt 5.1 i386 IM2 1.0.0 MSMSGS ggg@msn.local\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "CVR")
+        self.assertEqual(args[0], "1")
+        self.assertEqual(args[1], "1.0.0")
+
+        # 3. IM2 logs in
+        await client.send("USR 2 TWN I ggg@msn.local\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "USR")
+        self.assertEqual(args[1], "OK")
+        self.assertEqual(args[2], "ggg@msn.local")
+
+        # 4. Server auto-pushes contact list (SYN, GTC, BLP, LSG, LST) because IM2 skips SYN
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "SYN")
+        total_contacts = int(args[2])
+        total_groups = int(args[3])
+        cmd, _, _ = await client.next_cmd()
+        self.assertEqual(cmd, "GTC")
+        cmd, _, _ = await client.next_cmd()
+        self.assertEqual(cmd, "BLP")
+        for _ in range(total_groups):
+            cmd, _, _ = await client.next_cmd()
+            self.assertEqual(cmd, "LSG")
+        for _ in range(total_contacts):
+            cmd, _, _ = await client.next_cmd()
+            self.assertEqual(cmd, "LST")
+
+        # 5. IM2 sends status change without trid (CHG NLN 0)
+        await client.send("CHG NLN 0\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "CHG")
+        self.assertEqual(args[1], "NLN")
+
+        # 5. IM2 requests Switchboard
+        await client.send("XFR 4 SB\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "XFR")
+        self.assertEqual(args[1], "SB")
+        sb_host, sb_port = args[2].split(":")
+        cookie = args[4]
+
+        await client.close()
+
+        # 6. Test Switchboard connection with VER handshake (which IM2 and third-party clients send)
+        sb_client = await self._connect_client(int(sb_port))
+        await sb_client.send("VER 1 MSNP9 MSNP8 CVR0\r\n")
+        cmd, args, _ = await sb_client.next_cmd()
+        self.assertEqual(cmd, "VER")
+        self.assertEqual(args[1], "MSNP9")
+        self.assertEqual(args[2], "CVR0")
+
+        # Now authenticate to SB
+        await sb_client.send(f"USR 2 ggg@msn.local {cookie}\r\n")
+        cmd, args, _ = await sb_client.next_cmd()
+        self.assertEqual(cmd, "USR")
+        self.assertEqual(args[1], "OK")
+
+        await sb_client.close()
+
     def test_user_status_stringification(self):
         self.assertEqual(str(UserStatus.ONLINE), "NLN")
         self.assertEqual(str(UserStatus.AWAY), "AWY")

@@ -63,13 +63,19 @@ class NSClientHandler:
         self.msn_obj: str = ""
         self.sync_serial: int = 1
         self.initial_presence_sent = False
+        self.contact_list_sent = False
         self.client_app: str = ""
         self.auth_type: str = ""
 
     @property
+    def is_im2(self) -> bool:
+        app = getattr(self, "client_app", "").lower()
+        return any(c in app for c in ("im2", "instantmessenger2", "im 2"))
+
+    @property
     def is_ansi(self) -> bool:
         app = getattr(self, "client_app", "").lower()
-        if "trillian" in app or "miranda" in app or "msnmsgr 5." in app or "msnmsgr 4." in app:
+        if any(c in app for c in ("trillian", "miranda", "im2", "im 2", "qip", "kopete", "sim", "msnmsgr 5.", "msnmsgr 4.")):
             return True
         if self.dialect < 8:
             return True
@@ -153,6 +159,9 @@ class NSClientHandler:
         else:
             logger.warning(f"Unhandled NS command: {cmd} args={args}")
             trid = args[0] if args else "0"
+            # Benign client-side status / notification commands should not terminate connection
+            if cmd in ("CHL", "SDC", "SDG", "PUT", "NOT", "UUN", "UUM", "VAS"):
+                return
             self.send_error(MSNPError.SYNTAX_ERROR, trid)
 
     # Handlers
@@ -172,7 +181,7 @@ class NSClientHandler:
                 break
 
         # If PREFER_MD5_AUTH is explicitly set to True, negotiate MSNP7
-        if chosen in ("MSNP9", "MSNP8") and getattr(config, "PREFER_MD5_AUTH", False):
+        if chosen in ("MSNP9", "MSNP8", "MSNP10") and getattr(config, "PREFER_MD5_AUTH", False):
             chosen = "MSNP7"
 
         if not chosen:
@@ -182,7 +191,14 @@ class NSClientHandler:
             return
 
         self.dialect = int(chosen[4:]) if chosen.startswith("MSNP") and chosen[4:].isdigit() else 7
-        self.send_cmd("VER", trid, chosen)
+
+        resp_args = [chosen]
+        for a in offered:
+            if a.startswith("CVR"):
+                resp_args.append(a)
+                break
+
+        self.send_cmd("VER", trid, *resp_args)
 
     async def _cmd_cvr(self, args: List[str], payload: Optional[bytes]) -> None:
         # CVR trid 0x0409 winnt 5.1 i386 MSNMSGR 6.0.0602 MSMSGS user@email.com
@@ -190,9 +206,20 @@ class NSClientHandler:
         trid = args[0] if args else "1"
         client_ver = "6.0.0602"
         for a in args[5:]:
-            if any(c.isdigit() for c in a):
+            if "." in a and any(c.isdigit() for c in a):
                 client_ver = a
                 break
+        else:
+            for a in args[5:]:
+                if any(c.isdigit() for c in a):
+                    client_ver = a
+                    break
+
+        for a in args:
+            if "@" in a and "." in a and not getattr(self, "email", ""):
+                self.email = a.strip()
+                break
+
         download_url = f"http://{self.external_host}:{self.http_port}/"
         info_url = download_url
         self.send_cmd("CVR", trid, client_ver, client_ver, client_ver, download_url, info_url)
@@ -306,9 +333,16 @@ class NSClientHandler:
 
         self.send_cmd("USR", trid, *args)
 
-    async def _cmd_syn(self, args: List[str], payload: Optional[bytes]) -> None:
-        # SYN trid <cached_serial>
-        trid = args[0] if args else "1"
+        # Clients like IM2 do not send SYN in MSNP8/9 direct login;
+        # push contact list immediately so their roster UI is populated without delay
+        if self.is_im2:
+            self._send_contact_list("0")
+
+    def _send_contact_list(self, trid: str = "0", force: bool = False) -> None:
+        if getattr(self, "contact_list_sent", False) and not force:
+            return
+        self.contact_list_sent = True
+
         contacts = self.db.get_contacts(self.email)
 
         service_email = getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local")
@@ -390,16 +424,32 @@ class NSClientHandler:
                 # LST email friendly_name list_mask group_id
                 self.send_cmd("LST", c.contact_email, c.friendly_name or c.contact_email, c.list_flags, c.group_id)
 
+    async def _cmd_syn(self, args: List[str], payload: Optional[bytes]) -> None:
+        # SYN trid <cached_serial>
+        trid = args[0] if args else "1"
+        self._send_contact_list(trid=trid, force=True)
+
     async def _cmd_chg(self, args: List[str], payload: Optional[bytes]) -> None:
         # CHG trid status [client_id] [msnobj]
-        if len(args) < 2:
-            self.close()
+        if not args:
             return
 
-        trid = args[0]
-        new_status = args[1].upper()
-        client_id = args[2] if len(args) > 2 else "0"
-        msn_obj = args[3] if len(args) > 3 else ""
+        status_values = {"NLN", "BSY", "IDL", "BRB", "AWY", "PHN", "LUN", "HDN", "FLN"}
+        if args[0].upper() in status_values:
+            trid = "0"
+            new_status = args[0].upper()
+            client_id = args[1] if len(args) > 1 else "0"
+            msn_obj = args[2] if len(args) > 2 else ""
+        elif len(args) >= 2:
+            trid = args[0]
+            new_status = args[1].upper()
+            client_id = args[2] if len(args) > 2 else "0"
+            msn_obj = args[3] if len(args) > 3 else ""
+        else:
+            trid = args[0]
+            new_status = "NLN"
+            client_id = "0"
+            msn_obj = ""
 
         self.status = new_status
         self.client_id = client_id
@@ -415,6 +465,10 @@ class NSClientHandler:
             self.send_cmd("CHG", trid, self.status, self.client_id)
         else:
             self.send_cmd("CHG", trid, self.status)
+
+        # Deliver contact list if client changed status without sending SYN (e.g. IM2)
+        if self.is_im2 and not getattr(self, "contact_list_sent", False):
+            self._send_contact_list(trid=trid)
 
         # First status change after login triggers initial presence and offline messages
         if not self.initial_presence_sent:
@@ -703,22 +757,39 @@ class NSClientHandler:
 
     async def _cmd_gtc(self, args: List[str], payload: Optional[bytes]) -> None:
         # GTC trid value (A or N)
-        trid = args[0] if args else "1"
-        val = args[1].upper() if len(args) > 1 else "A"
+        if not args:
+            return
+        if args[0].isdigit() and len(args) > 1:
+            trid = args[0]
+            val = args[1].upper()
+        else:
+            trid = "0"
+            val = args[0].upper()
         self.sync_serial += 1
         self.send_cmd("GTC", trid, self.sync_serial, val)
 
     async def _cmd_blp(self, args: List[str], payload: Optional[bytes]) -> None:
         # BLP trid value (AL or BL)
-        trid = args[0] if args else "1"
-        val = args[1].upper() if len(args) > 1 else "AL"
+        if not args:
+            return
+        if args[0].isdigit() and len(args) > 1:
+            trid = args[0]
+            val = args[1].upper()
+        else:
+            trid = "0"
+            val = args[0].upper()
         self.sync_serial += 1
         self.send_cmd("BLP", trid, self.sync_serial, val)
+
+    async def _cmd_bpr(self, args: List[str], payload: Optional[bytes]) -> None:
+        # BPR trid ... (Buddy property update)
+        trid = args[0] if args else "0"
+        self.send_cmd("BPR", *args)
 
     async def _cmd_url(self, args: List[str], payload: Optional[bytes]) -> None:
         # URL trid [type]
         trid = args[0] if args else "1"
-        self.send_cmd("URL", trid, "/unused1", "/unused2", 1)
+        self.send_cmd("URL", trid, f"http://{self.external_host}:{self.http_port}/", "0")
 
     async def _cmd_qry(self, args: List[str], payload: Optional[bytes]) -> None:
         # QRY trid [response]
