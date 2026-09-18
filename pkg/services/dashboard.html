@@ -1,0 +1,1575 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>__PROJECT_NAME__ - Панель управления</title>
+    <style type="text/css">
+        body {
+            background-color: #d4d0c8;
+            color: #000000;
+            font-family: Tahoma, Verdana, Arial, sans-serif;
+            font-size: 11px;
+            margin: 0;
+            padding: 12px;
+        }
+        #container {
+            width: 990px;
+            margin: 0 auto;
+            background-color: #ece9d8;
+            border-top: 2px solid #ffffff;
+            border-left: 2px solid #ffffff;
+            border-right: 2px solid #404040;
+            border-bottom: 2px solid #404040;
+            padding: 10px;
+        }
+        .header-bar {
+            background: linear-gradient(to right, #000080, #3a6ea5);
+            color: #ffffff;
+            padding: 5px 8px;
+            font-weight: bold;
+            font-size: 13px;
+            border-top: 1px solid #999999;
+            border-left: 1px solid #999999;
+            border-right: 1px solid #333333;
+            border-bottom: 1px solid #333333;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .sub-bar {
+            background-color: #dfdfdf;
+            border: 1px solid #808080;
+            padding: 4px 8px;
+            font-size: 11px;
+            margin-bottom: 10px;
+        }
+
+        /* SysTabControl32 Classic Windows Tabs */
+        .tab-bar {
+            display: flex;
+            margin: 0 0 -2px 0;
+            padding: 0 0 0 4px;
+            position: relative;
+            z-index: 2;
+        }
+        .tab-btn {
+            background-color: #d4d0c8;
+            border-top: 2px solid #ffffff;
+            border-left: 2px solid #ffffff;
+            border-right: 2px solid #404040;
+            border-bottom: 2px solid #808080;
+            padding: 6px 14px;
+            margin-right: 3px;
+            cursor: pointer;
+            font-family: Tahoma, Verdana, Arial, sans-serif;
+            font-size: 11px;
+            font-weight: normal;
+            color: #000000;
+            position: relative;
+            top: 2px;
+            outline: none;
+        }
+        .tab-btn:hover {
+            background-color: #e2dfd8;
+        }
+        .tab-btn.active {
+            background-color: #ece9d8;
+            border-top: 2px solid #ffffff;
+            border-left: 2px solid #ffffff;
+            border-right: 2px solid #404040;
+            border-bottom: 2px solid #ece9d8;
+            font-weight: bold;
+            top: 0px;
+            padding-top: 7px;
+            padding-bottom: 7px;
+            z-index: 4;
+        }
+        .tab-content {
+            background-color: #ece9d8;
+            border-top: 2px solid #ffffff;
+            border-left: 2px solid #ffffff;
+            border-right: 2px solid #404040;
+            border-bottom: 2px solid #404040;
+            padding: 12px;
+            min-height: 480px;
+            position: relative;
+            z-index: 1;
+        }
+        .tab-pane {
+            display: none;
+        }
+        .tab-pane.active {
+            display: block;
+        }
+
+        fieldset {
+            border: 1px solid #808080;
+            padding: 10px;
+            margin-bottom: 12px;
+            background-color: #f0eee6;
+        }
+        legend {
+            font-weight: bold;
+            color: #000000;
+            padding: 0 4px;
+        }
+        table.data-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid #808080;
+            background-color: #ffffff;
+            font-size: 11px;
+        }
+        table.data-table th {
+            background-color: #d4d0c8;
+            border: 1px solid #808080;
+            padding: 4px 6px;
+            text-align: left;
+            font-weight: bold;
+            color: #000000;
+        }
+        table.data-table td {
+            border: 1px solid #d4d0c8;
+            padding: 4px 6px;
+        }
+        table.data-table tr.row-alt {
+            background-color: #f7f6f0;
+        }
+        table.data-table tr:hover {
+            background-color: #ffffdd;
+        }
+        input.text-input, select.text-input, textarea.text-input {
+            font-family: Tahoma, Arial, sans-serif;
+            font-size: 11px;
+            background-color: #ffffff;
+            color: #000000;
+            border-top: 1px solid #808080;
+            border-left: 1px solid #808080;
+            border-right: 1px solid #ffffff;
+            border-bottom: 1px solid #ffffff;
+            padding: 3px 5px;
+            box-sizing: border-box;
+        }
+        .btn-classic {
+            font-family: Tahoma, Arial, sans-serif;
+            font-size: 11px;
+            color: #000000;
+            background-color: #d4d0c8;
+            border-top: 1px solid #ffffff;
+            border-left: 1px solid #ffffff;
+            border-right: 2px solid #404040;
+            border-bottom: 2px solid #404040;
+            padding: 4px 14px;
+            cursor: pointer;
+            font-weight: bold;
+            outline: none;
+        }
+        .btn-classic:active {
+            border-top: 2px solid #404040;
+            border-left: 2px solid #404040;
+            border-right: 1px solid #ffffff;
+            border-bottom: 1px solid #ffffff;
+            padding: 5px 13px 3px 15px;
+        }
+        .btn-sm {
+            padding: 2px 6px;
+            font-size: 10px;
+            font-weight: normal;
+        }
+        .btn-sm:active {
+            padding: 3px 5px 1px 7px;
+        }
+        .btn-danger {
+            color: #990000;
+            font-weight: bold;
+        }
+        .btn-warn {
+            color: #b05a00;
+            font-weight: bold;
+        }
+        .status-msg {
+            margin-top: 8px;
+            padding: 6px 8px;
+            font-size: 11px;
+            display: none;
+        }
+        .msg-success {
+            border: 1px solid #008000;
+            background-color: #f0fff0;
+            color: #006600;
+            font-weight: bold;
+        }
+        .msg-error {
+            border: 1px solid #cc0000;
+            background-color: #fff0f0;
+            color: #cc0000;
+            font-weight: bold;
+        }
+        .footer {
+            border-top: 1px solid #808080;
+            margin-top: 12px;
+            padding-top: 6px;
+            text-align: center;
+            color: #555555;
+            font-size: 10px;
+        }
+        .code-box {
+            font-family: "Courier New", Courier, monospace;
+            background-color: #ffffff;
+            border: 1px solid #808080;
+            padding: 6px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        .code-font {
+            font-family: "Courier New", Courier, monospace;
+            font-size: 11px;
+        }
+
+        /* Classic Modal Dialog Windows */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.35);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-dialog {
+            background-color: #ece9d8;
+            border-top: 2px solid #ffffff;
+            border-left: 2px solid #ffffff;
+            border-right: 2px solid #000000;
+            border-bottom: 2px solid #000000;
+            box-shadow: 3px 3px 10px rgba(0,0,0,0.5);
+            width: 420px;
+            padding: 3px;
+        }
+        .modal-titlebar {
+            background: linear-gradient(to right, #000080, #1084d0);
+            color: #ffffff;
+            padding: 3px 6px;
+            font-weight: bold;
+            font-size: 11px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-close-btn {
+            background-color: #d4d0c8;
+            border-top: 1px solid #ffffff;
+            border-left: 1px solid #ffffff;
+            border-right: 1px solid #000000;
+            border-bottom: 1px solid #000000;
+            font-family: Arial, sans-serif;
+            font-size: 10px;
+            font-weight: bold;
+            width: 16px;
+            height: 14px;
+            line-height: 12px;
+            text-align: center;
+            cursor: pointer;
+            color: #000000;
+        }
+        .modal-body {
+            padding: 12px 10px;
+        }
+        .modal-footer {
+            padding: 8px 10px;
+            text-align: right;
+            border-top: 1px solid #d4d0c8;
+        }
+        .template-btn {
+            text-align: left;
+            margin-bottom: 4px;
+            width: 100%;
+            padding: 5px 8px;
+            font-size: 11px;
+            background-color: #e4e2d5;
+            border: 1px solid #808080;
+            cursor: pointer;
+            font-family: Tahoma, Arial, sans-serif;
+        }
+        .template-btn:hover {
+            background-color: #ffffdd;
+            border-color: #000080;
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <div class="header-bar">
+        <span>__PROJECT_NAME__ &bull; Панель управления сервером [v__SERVER_VERSION__]</span>
+        <span style="font-size: 11px; font-weight: normal;">Microsoft Notification Protocol Service &bull; __PROJECT_NAME__</span>
+    </div>
+
+    <div class="sub-bar" style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            Проект: <strong style="color: #000080;">__PROJECT_NAME__</strong> &bull;
+            Статус: <strong style="color: #008000;">РАБОТАЕТ</strong> &bull;
+            Хост: <strong>__EXTERNAL_HOST__</strong> &bull;
+            Порты: <strong>NS: 1863 | SB: 1864 | HTTP: __HTTP_PORT__</strong> &bull;
+            Служебный бот: <strong>__SERVICE_NAME__ (__SERVICE_EMAIL__)</strong>
+        </div>
+        <div id="adminAuthBadge">
+            __AUTH_BADGE_HTML__
+        </div>
+    </div>
+
+    <!-- Вкладки (Tabs) -->
+    <div class="tab-bar">
+        <button type="button" id="tabBtn-reg" class="tab-btn active" onclick="switchTab('reg')">Регистрация</button>
+        <button type="button" id="tabBtn-accounts" class="tab-btn" onclick="switchTab('accounts')">Управление учетными записями</button>
+        <button type="button" id="tabBtn-alerts" class="tab-btn" onclick="switchTab('alerts')">Оповещения</button>
+        <button type="button" id="tabBtn-server" class="tab-btn" onclick="switchTab('server')">Состояние сервера</button>
+    </div>
+
+    <div class="tab-content">
+
+        <!-- ВКЛАДКА 1: РЕГИСТРАЦИЯ -->
+        <div id="pane-reg" class="tab-pane active">
+            <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                <tr valign="top">
+                    <!-- Левая колонка: Форма регистрации -->
+                    <td width="55%" style="padding-right: 12px;">
+                        <fieldset>
+                            <legend>Регистрация нового пользователя</legend>
+                            <form id="regForm">
+                                <table width="100%" border="0" cellspacing="4" cellpadding="2">
+                                    <tr>
+                                        <td width="35%"><b>Email (Логин):</b></td>
+                                        <td width="65%">
+                                            <input type="email" id="reg_email" class="text-input" style="width: 100%;" placeholder="user@msn.local" required>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>Пароль:</b></td>
+                                        <td>
+                                            <input type="password" id="reg_password" class="text-input" style="width: 100%;" placeholder="Введите пароль" required>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>Подтверждение пароля:</b></td>
+                                        <td>
+                                            <input type="password" id="reg_confirm" class="text-input" style="width: 100%;" placeholder="Повторите пароль" required>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><b>Отображаемое имя (Ник):</b></td>
+                                        <td>
+                                            <input type="text" id="reg_friendly_name" class="text-input" style="width: 100%;" placeholder="Никнейм в контакт-листе">
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td style="padding-top: 6px;">
+                                            <input type="submit" value="Создать учетную запись" class="btn-classic">
+                                        </td>
+                                    </tr>
+                                </table>
+                                <div id="regMsg" class="status-msg"></div>
+                            </form>
+                        </fieldset>
+
+                        <fieldset>
+                            <legend>Особенности учетных записей</legend>
+                            <div style="line-height: 1.4; color: #333333;">
+                                &bull; <strong>Служебный аккаунт:</strong> В системе работает <code>__SERVICE_EMAIL__</code> (__SERVICE_NAME__), который уведомляет пользователей о тех. работах, банах и мутах.<br>
+                                &bull; <strong>Авто-регистрация:</strong> Если в конфигурации включен <code>AUTO_REGISTER_UNKNOWN_USERS</code>, новые клиенты регистрируются автоматически при первом входе.<br>
+                                &bull; <strong>Пароли:</strong> Хранятся в локальной базе <code>database.db</code> и поддерживают MD5 Challenge и Tweener (TWN).
+                            </div>
+                        </fieldset>
+                    </td>
+
+                    <!-- Правая колонка: Инструкция по подключению клиентов -->
+                    <td width="45%">
+                        <fieldset>
+                            <legend>Параметры подключения клиентов к серверу</legend>
+                            <div class="code-box">
+                                Сервер авторизации (Host): <strong>__EXTERNAL_HOST__</strong><br>
+                                Порт уведомлений (NS Port): <strong>1863</strong><br>
+                                Порт чатов (SB Port): <strong>1864</strong><br>
+                                Порт HTTP Nexus & Tweener: <strong>__HTTP_PORT__</strong><br>
+                                Домен по умолчанию: <strong>msn.local</strong>
+                            </div>
+
+                            <div style="margin-top: 8px;">
+                                <b>Поддерживаемые IM-клиенты:</b>
+                                <ul style="margin: 4px 0 0 16px; padding: 0; line-height: 1.4;">
+                                    <li><strong>Gaim 0.x / 1.x</strong> (Протокол MSN, Сервер: __EXTERNAL_HOST__:1863)</li>
+                                    <li><strong>Pidgin 2.x</strong> (Протокол MSN)</li>
+                                    <li><strong>Trillian Pro 1.x - 3.x</strong> (Плагин MSN Messenger)</li>
+                                    <li><strong>Miranda IM</strong> (Плагин msn.dll)</li>
+                                    <li><strong>MSN Messenger 4.0 - 7.5</strong> (С перенаправлением через hosts)</li>
+                                </ul>
+                            </div>
+
+                            <div style="margin-top: 8px; border-top: 1px solid #d4d0c8; padding-top: 6px; color: #555;">
+                                <strong>Примечание:</strong> На сервере активен режим <code>BYPASS_PASSPORT_FOR_TWN</code>, благодаря чему клиенты авторизуются мгновенно без зависаний на недоступных официальных серверах Microsoft Passport.
+                            </div>
+                        </fieldset>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- ВКЛАДКА 2: УПРАВЛЕНИЕ УЧЕТНЫМИ ЗАПИСЯМИ -->
+        <div id="pane-accounts" class="tab-pane">
+            <fieldset>
+                <legend>Фильтр и управление списком пользователей</legend>
+                <table width="100%" border="0" cellspacing="0" cellpadding="2">
+                    <tr>
+                        <td width="55%">
+                            <b>Поиск:</b>
+                            <input type="text" id="userSearchInput" class="text-input" style="width: 230px;" placeholder="Поиск по логину или имени..." oninput="filterUsersTable()">
+                            <button type="button" class="btn-classic" onclick="refreshAccountsList()">Обновить</button>
+                        </td>
+                        <td width="45%" align="right">
+                            <span id="usersCounter" style="font-weight: bold; color: #333;">Всего аккаунтов: {len(users)} | В сети: {len(active_users)}</span>
+                        </td>
+                    </tr>
+                </table>
+            </fieldset>
+
+            <table class="data-table" id="usersTable">
+                <thead>
+                    <tr>
+                        <th width="22%">Email (Логин)</th>
+                        <th width="18%">Отображаемое имя</th>
+                        <th width="16%">Статус / Наказания</th>
+                        <th width="6%" style="text-align: center;">Контактов</th>
+                        <th width="11%">Создан</th>
+                        <th width="11%">Был в сети</th>
+                        <th width="16%" style="text-align: center;">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody">
+                    __USER_ROWS_HTML__
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ВКЛАДКА 3: ОПОВЕЩЕНИЯ (НОВАЯ ВКЛАДКА) -->
+        <div id="pane-alerts" class="tab-pane">
+            <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                <tr valign="top">
+                    <!-- Левая колонка: Быстрые шаблоны тех. работ -->
+                    <td width="48%" style="padding-right: 12px;">
+                        <fieldset>
+                            <legend>Быстрые шаблоны оповещений о тех. работах</legend>
+                            <p style="margin-top: 0; color: #444;">Нажмите на шаблон, чтобы автоматически подставить его текст:</p>
+                            <button type="button" class="template-btn" onclick="applyTemplate('Сервер будет перезагружен через 15 минут для проведения технических работ. Пожалуйста, завершите важные диалоги.')">
+                                &bull; <strong>Перезагрузка через 15 мин</strong> (Технические работы)
+                            </button>
+                            <button type="button" class="template-btn" onclick="applyTemplate('Сервер уходит на техническое обслуживание через 5 минут. Пожалуйста, сохраните переписку.')">
+                                &bull; <strong>Техобслуживание через 5 мин</strong> (Сохранение переписки)
+                            </button>
+                            <button type="button" class="template-btn" onclick="applyTemplate('Плановые технические работы успешно завершены. Все службы сервера работают в штатном режиме.')">
+                                &bull; <strong>Работы завершены</strong> (Все службы работают в штатном режиме)
+                            </button>
+                            <button type="button" class="template-btn" onclick="applyTemplate('Внимание: на сервере проводятся регламентные технические работы. Возможны кратковременные перебои связи.')">
+                                &bull; <strong>Регламентные работы</strong> (Возможны перебои связи)
+                            </button>
+                            <button type="button" class="template-btn" onclick="applyTemplate('Предупреждение администрации: спам, флуд и нецензурные выражения запрещены правилами сервера.')">
+                                &bull; <strong>Соблюдение правил чата</strong> (Предупреждение о спаме/флуде)
+                            </button>
+                        </fieldset>
+
+                        <fieldset>
+                            <legend>Служебная учетная запись</legend>
+                            <div style="line-height: 1.4; color: #333333;">
+                                &bull; <strong>Отправитель:</strong> <code>__SERVICE_EMAIL__</code> (__SERVICE_NAME__)<br>
+                                &bull; <strong>Доставка в реальном времени:</strong> Онлайн-пользователи получают сообщение прямо в окне чата Switchboard и во всплывающем уведомлении клиента.<br>
+                                &bull; <strong>Офлайн-сообщения:</strong> При выборе режима «Всем пользователям» офлайн-пользователи увидят оповещение сразу при следующем входе.
+                            </div>
+                        </fieldset>
+                    </td>
+
+                    <!-- Правая колонка: Форма отправки произвольного оповещения -->
+                    <td width="52%">
+                        <fieldset>
+                            <legend>Отправка произвольного оповещения</legend>
+                            <form id="notifyForm">
+                                <table width="100%" border="0" cellspacing="3" cellpadding="2">
+                                    <tr>
+                                        <td width="28%"><b>Кому отправить:</b></td>
+                                        <td width="72%">
+                                            <select id="notifyTarget" class="text-input" style="width: 100%;" onchange="onNotifyTargetChange()">
+                                                <option value="online">Всем пользователям онлайн (сейчас в сети)</option>
+                                                <option value="all">Всем пользователям в базе (включая офлайн)</option>
+                                                <option value="custom">Конкретному пользователю (по логину)...</option>
+                                            </select>
+                                        </td>
+                                    </tr>
+                                    <tr id="notifyCustomRow" style="display: none;">
+                                        <td><b>Логин пользователя:</b></td>
+                                        <td>
+                                            <input type="text" id="notifyCustomEmail" class="text-input" style="width: 100%;" placeholder="user@msn.local">
+                                        </td>
+                                    </tr>
+                                    <tr valign="top">
+                                        <td style="padding-top: 6px;"><b>Текст оповещения:</b></td>
+                                        <td style="padding-top: 6px;">
+                                            <textarea id="notifyMessageText" class="text-input" rows="7" style="width: 100%;" placeholder="Введите текст сообщения для пользователей..." required></textarea>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td></td>
+                                        <td style="padding-top: 6px;">
+                                            <input type="submit" value="Отправить оповещение" class="btn-classic">
+                                            <button type="button" class="btn-classic" style="margin-left: 6px;" onclick="clearNotifyForm()">Очистить</button>
+                                        </td>
+                                    </tr>
+                                </table>
+                                <div id="notifyStatusMsg" class="status-msg"></div>
+                            </form>
+                        </fieldset>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- ВКЛАДКА 4: СОСТОЯНИЕ СЕРВЕРА -->
+        <div id="pane-server" class="tab-pane">
+            <fieldset>
+                <legend>Статус служб и производительность сервера</legend>
+                <table width="100%" border="0" cellspacing="3" cellpadding="2">
+                    <tr>
+                        <td width="25%"><b>Проект / Сервер:</b></td>
+                        <td width="25%"><span style="color: #000080; font-weight: bold;">__PROJECT_NAME__ (v__SERVER_VERSION__)</span></td>
+                        <td width="25%"><b>Время непрерывной работы:</b></td>
+                        <td width="25%"><span id="serverUptimeText"><strong>__UPTIME_STR__</strong></span></td>
+                    </tr>
+                    <tr>
+                        <td><b>Notification Server (NS):</b></td>
+                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ 1863]</span></td>
+                        <td><b>Пользователей онлайн:</b></td>
+                        <td><span id="serverActiveCountText" style="color: #008000; font-weight: bold;">{len(active_users)}</span> / <span id="serverTotalUsersText">{len(users)}</span></td>
+                    </tr>
+                    <tr>
+                        <td><b>Switchboard Server (SB):</b></td>
+                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ 1864]</span></td>
+                        <td><b>Связей в списках контактов:</b></td>
+                        <td><span id="serverTotalContactsText"><strong>{db_stats.get('total_contacts', 0)}</strong></span> (Групп: <span id="serverTotalGroupsText">{db_stats.get('total_groups', 0)}</span>)</td>
+                    </tr>
+                    <tr>
+                        <td><b>HTTP Nexus & Tweener:</b></td>
+                        <td><span style="color: #008000; font-weight: bold;">[АКТИВЕН, ПОРТ __HTTP_PORT__]</span></td>
+                        <td><b>Офлайн-сообщений в очереди:</b></td>
+                        <td><span id="serverPendingMsgsText"><strong>{db_stats.get('pending_offline_messages', 0)}</strong></span></td>
+                    </tr>
+                    <tr>
+                        <td><b>Файл базы данных:</b></td>
+                        <td colspan="3"><code>database.db</code> (__DB_SIZE_KB__ КБ, SQLite WAL)</td>
+                    </tr>
+                </table>
+            </fieldset>
+
+            <fieldset>
+                <legend>Мониторинг активных подключений в реальном времени</legend>
+                <table width="100%" border="0" cellspacing="0" cellpadding="2" style="margin-bottom: 6px;">
+                    <tr>
+                        <td>
+                            <label style="cursor: pointer;">
+                                <input type="checkbox" id="autoRefreshStatusCb" onchange="toggleAutoRefresh(this.checked)">
+                                <b>Автообновление каждые 5 сек.</b>
+                            </label>
+                            <button type="button" class="btn-classic" style="margin-left: 8px;" onclick="refreshServerStatus()">Обновить сейчас</button>
+                        </td>
+                        <td align="right">
+                            <span id="lastUpdatedStatus" style="color: #555;">Обновлено: только что</span>
+                        </td>
+                    </tr>
+                </table>
+
+                <table class="data-table" id="connectionsTable">
+                    <thead>
+                        <tr>
+                            <th width="24%">Email</th>
+                            <th width="22%">Отображаемое имя</th>
+                            <th width="20%">Адрес клиента (IP:порт)</th>
+                            <th width="12%">Статус</th>
+                            <th width="12%">Client ID</th>
+                            <th width="10%" style="text-align: center;">Действие</th>
+                        </tr>
+                    </thead>
+                    <tbody id="connectionsTableBody">
+                        __CONN_ROWS_HTML__
+                    </tbody>
+                </table>
+            </fieldset>
+        </div>
+
+    </div>
+
+    <div class="footer">
+        __PROJECT_NAME__ Server Administration Console &bull; Microsoft Notification Protocol Emulator &bull; Готово
+    </div>
+</div>
+
+<!-- Модальное окно: Бан пользователя -->
+<div id="banModal" class="modal-overlay">
+    <div class="modal-dialog">
+        <div class="modal-titlebar">
+            <span>Блокировка учетной записи (Бан)</span>
+            <div class="modal-close-btn" onclick="closeModal('banModal')">&times;</div>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0;">Пользователь: <strong id="modalBanEmail"></strong></p>
+            <p style="color: #555; margin-bottom: 8px; line-height: 1.3;">
+                В забаненном состоянии пользователь <strong>не может отправлять и принимать сообщения</strong>. При попытке отправки бот автоматически сообщит причину и оставшееся время бана.
+            </p>
+            <table width="100%" border="0" cellspacing="2" cellpadding="2">
+                <tr>
+                    <td width="35%"><b>Срок бана:</b></td>
+                    <td width="65%">
+                        <select id="modalBanDuration" class="text-input" style="width: 100%;">
+                            <option value="15">15 минут</option>
+                            <option value="60" selected>1 час</option>
+                            <option value="360">6 часов</option>
+                            <option value="1440">24 часа (1 день)</option>
+                            <option value="10080">7 дней</option>
+                            <option value="0">Бессрочно (Навсегда)</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <td><b>Причина бана:</b></td>
+                    <td>
+                        <input type="text" id="modalBanReason" class="text-input" style="width: 100%;" value="Нарушение правил сервера">
+                    </td>
+                </tr>
+            </table>
+            <div id="modalBanMsg" class="status-msg"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-classic btn-danger" onclick="submitBan(true)">Применить бан</button>
+            <button type="button" class="btn-classic" id="btnLiftBan" onclick="submitBan(false)" style="margin-left: 4px;">Снять бан</button>
+            <button type="button" class="btn-classic" onclick="closeModal('banModal')" style="margin-left: 4px;">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно: Мут пользователя -->
+<div id="muteModal" class="modal-overlay">
+    <div class="modal-dialog">
+        <div class="modal-titlebar">
+            <span>Ограничение отправки сообщений (Мут)</span>
+            <div class="modal-close-btn" onclick="closeModal('muteModal')">&times;</div>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0;">Пользователь: <strong id="modalMuteEmail"></strong></p>
+            <p style="color: #555; margin-bottom: 8px; line-height: 1.3;">
+                Замьюченный пользователь <strong>может принимать сообщения</strong> от всех, но <strong>не может отправлять</strong> сообщения в чаты.
+            </p>
+            <table width="100%" border="0" cellspacing="2" cellpadding="2">
+                <tr>
+                    <td width="35%"><b>Срок мута:</b></td>
+                    <td width="65%">
+                        <select id="modalMuteDuration" class="text-input" style="width: 100%;">
+                            <option value="15">15 минут</option>
+                            <option value="60" selected>1 час</option>
+                            <option value="360">6 часов</option>
+                            <option value="1440">24 часа (1 день)</option>
+                            <option value="10080">7 дней</option>
+                            <option value="0">Бессрочно (Навсегда)</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <td><b>Причина мута:</b></td>
+                    <td>
+                        <input type="text" id="modalMuteReason" class="text-input" style="width: 100%;" value="Флуд / Спам">
+                    </td>
+                </tr>
+            </table>
+            <div id="modalMuteMsg" class="status-msg"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-classic btn-warn" onclick="submitMute(true)">Применить мут</button>
+            <button type="button" class="btn-classic" id="btnLiftMute" onclick="submitMute(false)" style="margin-left: 4px;">Снять мут</button>
+            <button type="button" class="btn-classic" onclick="closeModal('muteModal')" style="margin-left: 4px;">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно: Отправка ЛС от имени бота -->
+<div id="directMsgModal" class="modal-overlay">
+    <div class="modal-dialog">
+        <div class="modal-titlebar">
+            <span>Служебное сообщение пользователю</span>
+            <div class="modal-close-btn" onclick="closeModal('directMsgModal')">&times;</div>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0;">Получатель: <strong id="modalDirectEmail"></strong></p>
+            <p style="color: #555; margin-bottom: 6px;">Отправитель: <strong>__SERVICE_NAME__</strong></p>
+            <table width="100%" border="0" cellspacing="2" cellpadding="2">
+                <tr valign="top">
+                    <td width="25%"><b>Сообщение:</b></td>
+                    <td width="75%">
+                        <textarea id="modalDirectText" class="text-input" rows="4" style="width: 100%;" placeholder="Введите текст сообщения..."></textarea>
+                    </td>
+                </tr>
+            </table>
+            <div id="modalDirectStatus" class="status-msg"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-classic" onclick="submitDirectMsg()">Отправить</button>
+            <button type="button" class="btn-classic" onclick="closeModal('directMsgModal')" style="margin-left: 4px;">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно: Смена пароля -->
+<div id="passwordModal" class="modal-overlay">
+    <div class="modal-dialog">
+        <div class="modal-titlebar">
+            <span>Смена пароля</span>
+            <div class="modal-close-btn" onclick="closeModal('passwordModal')">&times;</div>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0;">Пользователь: <strong id="modalPwdEmail"></strong></p>
+            <table width="100%" border="0" cellspacing="2" cellpadding="2">
+                <tr>
+                    <td width="35%"><b>Новый пароль:</b></td>
+                    <td width="65%"><input type="password" id="modalNewPassword" class="text-input" style="width: 100%;"></td>
+                </tr>
+            </table>
+            <div id="modalPwdMsg" class="status-msg"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-classic" onclick="submitPasswordChange()">Сохранить</button>
+            <button type="button" class="btn-classic" onclick="closeModal('passwordModal')" style="margin-left: 4px;">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно: Изменение имени -->
+<div id="nameModal" class="modal-overlay">
+    <div class="modal-dialog">
+        <div class="modal-titlebar">
+            <span>Изменение отображаемого имени</span>
+            <div class="modal-close-btn" onclick="closeModal('nameModal')">&times;</div>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0;">Пользователь: <strong id="modalNameEmail"></strong></p>
+            <table width="100%" border="0" cellspacing="2" cellpadding="2">
+                <tr>
+                    <td width="35%"><b>Новое имя:</b></td>
+                    <td width="65%"><input type="text" id="modalNewName" class="text-input" style="width: 100%;"></td>
+                </tr>
+            </table>
+            <div id="modalNameMsg" class="status-msg"></div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-classic" onclick="submitNameChange()">Сохранить</button>
+            <button type="button" class="btn-classic" onclick="closeModal('nameModal')" style="margin-left: 4px;">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно: Вход администратора -->
+<div id="loginModal" class="modal-overlay">
+    <div class="modal-dialog" style="max-width: 360px;">
+        <div class="modal-titlebar">
+            <span>__PROJECT_NAME__ - Вход администратора</span>
+            <div class="modal-close-btn" onclick="closeModal('loginModal')">&times;</div>
+        </div>
+        <div class="modal-body">
+            <p style="margin-top: 0; color: #333; line-height: 1.4;">
+                Для доступа к управлению учетными записями, отправке оповещений и серверу введите пароль администратора:
+            </p>
+            <form id="adminLoginForm" onsubmit="event.preventDefault(); submitAdminLogin();">
+                <table width="100%" border="0" cellspacing="2" cellpadding="2">
+                    <tr>
+                        <td width="30%"><b>Пароль:</b></td>
+                        <td width="70%">
+                            <input type="password" id="adminPasswordInput" class="text-input" style="width: 100%;" placeholder="Пароль администратора" required autofocus>
+                        </td>
+                    </tr>
+                </table>
+                <div id="loginStatusMsg" class="status-msg" style="display: none; margin-top: 8px;"></div>
+                <div style="margin-top: 12px; text-align: right;">
+                    <button type="submit" class="btn-classic">Войти</button>
+                    <button type="button" class="btn-classic" onclick="closeModal('loginModal')" style="margin-left: 4px;">Отмена</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+    var isAdminLoggedIn = __IS_ADMIN_BOOL__;
+    var currentTargetEmail = '';
+    var autoRefreshTimer = null;
+
+    function adminFetch(url, options) {
+        options = options || {};
+        options.headers = options.headers || {};
+        var token = localStorage.getItem('msnp_admin_token');
+        if (token) {
+            options.headers['X-Admin-Token'] = token;
+        }
+        return fetch(url, options).then(function(res) {
+            if (res.status === 401) {
+                updateAdminAuthUI(false);
+                openLoginModal();
+            }
+            return res;
+        });
+    }
+
+    function openLoginModal() {
+        var msg = document.getElementById('loginStatusMsg');
+        if (msg) msg.style.display = 'none';
+        var inp = document.getElementById('adminPasswordInput');
+        if (inp) inp.value = '';
+        var m = document.getElementById('loginModal');
+        if (m) {
+            m.style.display = 'flex';
+            setTimeout(function() { if (inp) inp.focus(); }, 100);
+        }
+    }
+
+    async function submitAdminLogin() {
+        var inp = document.getElementById('adminPasswordInput');
+        var pwd = inp ? inp.value : '';
+        var msgBox = document.getElementById('loginStatusMsg');
+        if (msgBox) msgBox.style.display = 'none';
+        if (!pwd) return;
+
+        try {
+            var res = await fetch('/api/admin/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pwd })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                localStorage.setItem('msnp_admin_token', data.token);
+                updateAdminAuthUI(true);
+                closeModal('loginModal');
+                var activePane = document.querySelector('.tab-pane.active');
+                if (activePane && activePane.id === 'pane-accounts') {
+                    refreshAccountsList();
+                } else if (activePane && activePane.id === 'pane-server') {
+                    refreshServerStatus();
+                }
+            } else {
+                if (msgBox) {
+                    msgBox.textContent = data.error || 'Неверный пароль администратора';
+                    msgBox.className = 'status-msg msg-error';
+                    msgBox.style.display = 'block';
+                }
+            }
+        } catch (err) {
+            if (msgBox) {
+                msgBox.textContent = 'Ошибка связи: ' + err.message;
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        }
+    }
+
+    async function submitAdminLogout() {
+        try {
+            await adminFetch('/api/admin/logout', { method: 'POST' });
+        } catch (e) {}
+        localStorage.removeItem('msnp_admin_token');
+        updateAdminAuthUI(false);
+        switchTab('reg');
+        var tb = document.getElementById('usersTableBody');
+        if (tb) tb.innerHTML = '<tr><td colspan="7" align="center" style="color: #666; padding: 25px;"><strong>Доступ к списку пользователей защищен паролем администратора.</strong><br><br><button type="button" class="btn-classic" onclick="openLoginModal()">Ввести пароль администратора</button></td></tr>';
+        var cb = document.getElementById('connectionsTableBody');
+        if (cb) cb.innerHTML = '<tr><td colspan="6" align="center" style="color: #666; padding: 20px;"><strong>Доступ к списку подключений защищен паролем администратора.</strong><br><br><button type="button" class="btn-classic" onclick="openLoginModal()">Ввести пароль администратора</button></td></tr>';
+    }
+
+    function updateAdminAuthUI(isAuth) {
+        isAdminLoggedIn = isAuth;
+        var badge = document.getElementById('adminAuthBadge');
+        if (!badge) return;
+        if (isAuth) {
+            badge.innerHTML = '<span id="authStatusText" style="color: #008000; font-weight: bold;">&#128274; Администратор: Авторизован</span> <button type="button" id="authBtn" class="btn-classic btn-sm" onclick="submitAdminLogout()" style="margin-left: 6px;">Выйти</button>';
+        } else {
+            badge.innerHTML = '<span id="authStatusText" style="color: #666;">&#128274; Гостевой режим (регистрация)</span> <button type="button" id="authBtn" class="btn-classic btn-sm" onclick="openLoginModal()" style="margin-left: 6px;">Вход администратора</button>';
+        }
+    }
+
+    async function checkAdminStatus() {
+        try {
+            var res = await adminFetch('/api/admin/check');
+            if (res.ok) {
+                var data = await res.json();
+                updateAdminAuthUI(Boolean(data.authenticated));
+                if (data.authenticated) {
+                    var hash = location.hash.replace('#', '');
+                    if (hash === 'accounts') refreshAccountsList();
+                    else if (hash === 'server') refreshServerStatus();
+                }
+            }
+        } catch (e) {}
+    }
+
+    // Tab Switching
+    function switchTab(tabId) {
+        if (tabId !== 'reg' && !isAdminLoggedIn) {
+            openLoginModal();
+            return;
+        }
+        var tabs = ['reg', 'accounts', 'alerts', 'server'];
+        for (var i = 0; i < tabs.length; i++) {
+            var t = tabs[i];
+            var btn = document.getElementById('tabBtn-' + t);
+            var pane = document.getElementById('pane-' + t);
+            if (btn && pane) {
+                if (t === tabId) {
+                    btn.className = 'tab-btn active';
+                    pane.className = 'tab-pane active';
+                } else {
+                    btn.className = 'tab-btn';
+                    pane.className = 'tab-pane';
+                }
+            }
+        }
+        location.hash = '#' + tabId;
+        if (tabId === 'accounts') {
+            refreshAccountsList();
+        } else if (tabId === 'server') {
+            refreshServerStatus();
+        }
+    }
+
+    // Check hash on page load
+    window.addEventListener('DOMContentLoaded', function() {
+        checkAdminStatus();
+        var hash = location.hash.replace('#', '');
+        if (hash === 'accounts' || hash === 'server' || hash === 'reg' || hash === 'alerts') {
+            switchTab(hash);
+        }
+    });
+
+    // Helper: Escape HTML
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
+    // Registration Form Handler (PUBLIC)
+    document.getElementById('regForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var msgBox = document.getElementById('regMsg');
+        msgBox.style.display = 'none';
+        msgBox.className = 'status-msg';
+
+        var pwd = document.getElementById('reg_password').value;
+        var confirmPwd = document.getElementById('reg_confirm').value;
+
+        if (pwd !== confirmPwd) {
+            msgBox.textContent = 'Ошибка: Введенные пароли не совпадают!';
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+            return;
+        }
+
+        var payload = {
+            email: document.getElementById('reg_email').value.trim(),
+            password: pwd,
+            confirm_password: confirmPwd,
+            friendly_name: document.getElementById('reg_friendly_name').value.trim()
+        };
+
+        try {
+            var res = await fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                msgBox.textContent = 'Пользователь ' + data.email + ' успешно зарегистрирован!';
+                msgBox.className = 'status-msg msg-success';
+                msgBox.style.display = 'block';
+                document.getElementById('regForm').reset();
+            } else {
+                msgBox.textContent = data.error || 'Ошибка при регистрации аккаунта';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        } catch (err) {
+            msgBox.textContent = 'Сетевая ошибка: ' + err.message;
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+        }
+    });
+
+    // Refresh Accounts List
+    async function refreshAccountsList() {
+        try {
+            var res = await adminFetch('/api/users');
+            if (!res.ok) return;
+            var data = await res.json();
+            var users = data.users || [];
+            var onlineCount = 0;
+
+            var tbody = document.getElementById('usersTableBody');
+            var rows = [];
+
+            for (var i = 0; i < users.length; i++) {
+                var u = users[i];
+                if (u.is_online) onlineCount++;
+                var isAlt = (i % 2 === 1) ? ' class="row-alt"' : '';
+                var statusHtml = u.is_online
+                    ? '<span style="color: #008000; font-weight: bold;">[В СЕТИ: ' + escapeHtml(u.live_status || 'NLN') + ']</span>'
+                    : '<span style="color: #666666;">[ОФЛАЙН]</span>';
+
+                var penalties = [];
+                if (u.is_banned) {
+                    penalties.push('<span style="color: #cc0000; font-weight: bold; margin-left: 3px;" title="Бан: ' + escapeHtml(u.ban_reason || '') + '">[БАН: ' + escapeHtml(u.ban_remaining || '') + ']</span>');
+                }
+                if (u.is_muted) {
+                    penalties.push('<span style="color: #b05a00; font-weight: bold; margin-left: 3px;" title="Мут: ' + escapeHtml(u.mute_reason || '') + '">[МУТ: ' + escapeHtml(u.mute_remaining || '') + ']</span>');
+                }
+                var penaltiesHtml = penalties.join(' ');
+
+                var emailEsc = escapeHtml(u.email);
+                var nameEsc = escapeHtml(u.friendly_name || '');
+                var emailJs = u.email.replace(/'/g, "\\'");
+                var nameJs = (u.friendly_name || '').replace(/'/g, "\\'");
+                var createdStr = escapeHtml((u.created_at || '').substring(0, 19));
+                var lastSeenStr = escapeHtml((u.last_seen || '').substring(0, 19));
+
+                var disconnectBtn = u.is_online
+                    ? '<button type="button" class="btn-classic btn-sm btn-warn" onclick="disconnectUser(\'' + emailJs + '\')" title="Разорвать текущую сессию">Сброс</button> '
+                    : '';
+
+                var banBtnCls = u.is_banned ? 'btn-classic btn-sm btn-danger' : 'btn-classic btn-sm';
+                var banBtnTxt = u.is_banned ? 'Разбан' : 'Бан';
+                var muteBtnCls = u.is_muted ? 'btn-classic btn-sm btn-warn' : 'btn-classic btn-sm';
+                var muteBtnTxt = u.is_muted ? 'Размут' : 'Мут';
+
+                rows.push(
+                    '<tr' + isAlt + ' id="row-' + emailEsc + '" data-email="' + emailEsc.toLowerCase() + '" data-name="' + nameEsc.toLowerCase() + '">' +
+                    '<td><strong>' + emailEsc + '</strong></td>' +
+                    '<td id="name-cell-' + emailEsc + '">' + nameEsc + '</td>' +
+                    '<td>' + statusHtml + ' ' + penaltiesHtml + '</td>' +
+                    '<td align="center"><strong>' + (u.contact_count || 0) + '</strong></td>' +
+                    '<td style="color: #555555;">' + createdStr + '</td>' +
+                    '<td style="color: #555555;">' + lastSeenStr + '</td>' +
+                    '<td align="center">' +
+                        '<button type="button" class="' + banBtnCls + '" onclick="openBanModal(\'' + emailJs + '\', ' + (u.is_banned ? 1 : 0) + ')" title="Управление баном">' + banBtnTxt + '</button> ' +
+                        '<button type="button" class="' + muteBtnCls + '" onclick="openMuteModal(\'' + emailJs + '\', ' + (u.is_muted ? 1 : 0) + ')" title="Управление мутом">' + muteBtnTxt + '</button> ' +
+                        '<button type="button" class="btn-classic btn-sm" onclick="openDirectMsgModal(\'' + emailJs + '\')" title="Отправить ЛС">ЛС</button> ' +
+                        '<button type="button" class="btn-classic btn-sm" onclick="openPasswordModal(\'' + emailJs + '\')" title="Сменить пароль">Пароль</button> ' +
+                        '<button type="button" class="btn-classic btn-sm" onclick="openNameModal(\'' + emailJs + '\', \'' + nameJs + '\')" title="Изменить имя">Имя</button> ' +
+                        disconnectBtn +
+                        '<button type="button" class="btn-classic btn-sm btn-danger" onclick="deleteUser(\'' + emailJs + '\')" title="Удалить аккаунт">Удалить</button>' +
+                    '</td>' +
+                    '</tr>'
+                );
+            }
+
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" align="center" style="color: #666; padding: 12px;">В базе данных пока нет пользователей</td></tr>';
+            } else {
+                tbody.innerHTML = rows.join('');
+            }
+
+            document.getElementById('usersCounter').textContent = 'Всего аккаунтов: ' + users.length + ' | В сети: ' + onlineCount;
+            filterUsersTable();
+        } catch (e) {
+            console.error('Error loading accounts:', e);
+        }
+    }
+
+    // Filter Users Table
+    function filterUsersTable() {
+        var q = (document.getElementById('userSearchInput').value || '').trim().toLowerCase();
+        var rows = document.querySelectorAll('#usersTableBody tr[data-email]');
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            var email = r.getAttribute('data-email') || '';
+            var name = r.getAttribute('data-name') || '';
+            if (!q || email.indexOf(q) !== -1 || name.indexOf(q) !== -1) {
+                r.style.display = '';
+            } else {
+                r.style.display = 'none';
+            }
+        }
+    }
+
+    // Apply Quick Alert Template
+    function applyTemplate(text) {
+        document.getElementById('notifyMessageText').value = text;
+        document.getElementById('notifyMessageText').focus();
+    }
+
+    function onNotifyTargetChange() {
+        var val = document.getElementById('notifyTarget').value;
+        document.getElementById('notifyCustomRow').style.display = (val === 'custom') ? '' : 'none';
+    }
+
+    function clearNotifyForm() {
+        document.getElementById('notifyMessageText').value = '';
+        document.getElementById('notifyCustomEmail').value = '';
+        var msg = document.getElementById('notifyStatusMsg');
+        if (msg) msg.style.display = 'none';
+    }
+
+    // Submit Notification / Broadcast
+    document.getElementById('notifyForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var msgBox = document.getElementById('notifyStatusMsg');
+        msgBox.style.display = 'none';
+        msgBox.className = 'status-msg';
+
+        var targetVal = document.getElementById('notifyTarget').value;
+        var target = targetVal;
+        if (targetVal === 'custom') {
+            target = document.getElementById('notifyCustomEmail').value.trim();
+            if (!target) {
+                msgBox.textContent = 'Укажите email пользователя!';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+                return;
+            }
+        }
+
+        var message = document.getElementById('notifyMessageText').value.trim();
+        if (!message) return;
+
+        try {
+            var res = await adminFetch('/api/notify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target: target, message: message })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                var info = 'Оповещение успешно отправлено! Доставлено онлайн: ' + (data.delivered_online || 0);
+                if (data.saved_offline) {
+                    info += ', сохранено в офлайн-очередь: ' + data.saved_offline;
+                }
+                msgBox.textContent = info;
+                msgBox.className = 'status-msg msg-success';
+                msgBox.style.display = 'block';
+            } else {
+                msgBox.textContent = data.error || 'Ошибка отправки оповещения';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        } catch (err) {
+            msgBox.textContent = 'Ошибка связи: ' + err.message;
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+        }
+    });
+
+    // Ban Modal
+    function openBanModal(email, isBanned) {
+        currentTargetEmail = email;
+        document.getElementById('modalBanEmail').textContent = email;
+        var msgBox = document.getElementById('modalBanMsg');
+        msgBox.style.display = 'none';
+        msgBox.className = 'status-msg';
+
+        document.getElementById('btnLiftBan').style.display = isBanned ? 'inline-block' : 'none';
+        document.getElementById('banModal').style.display = 'flex';
+    }
+
+    async function submitBan(apply) {
+        var msgBox = document.getElementById('modalBanMsg');
+        msgBox.style.display = 'none';
+
+        if (!apply) {
+            // Lift ban
+            try {
+                var res = await adminFetch('/api/users/unban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: currentTargetEmail })
+                });
+                var data = await res.json();
+                if (res.ok && data.success) {
+                    msgBox.textContent = 'Бан успешно снят!';
+                    msgBox.className = 'status-msg msg-success';
+                    msgBox.style.display = 'block';
+                    setTimeout(function() { closeModal('banModal'); refreshAccountsList(); }, 700);
+                } else {
+                    msgBox.textContent = data.error || 'Не удалось снять бан';
+                    msgBox.className = 'status-msg msg-error';
+                    msgBox.style.display = 'block';
+                }
+            } catch (e) {
+                msgBox.textContent = 'Ошибка: ' + e.message;
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+            return;
+        }
+
+        // Apply ban
+        var dur = parseInt(document.getElementById('modalBanDuration').value);
+        var reason = document.getElementById('modalBanReason').value.trim();
+
+        try {
+            var res = await adminFetch('/api/users/ban', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: currentTargetEmail,
+                    duration_minutes: dur,
+                    reason: reason
+                })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                msgBox.textContent = 'Пользователь успешно забанен!';
+                msgBox.className = 'status-msg msg-success';
+                msgBox.style.display = 'block';
+                setTimeout(function() { closeModal('banModal'); refreshAccountsList(); }, 700);
+            } else {
+                msgBox.textContent = data.error || 'Ошибка при установке бана';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        } catch (e) {
+            msgBox.textContent = 'Ошибка: ' + e.message;
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+        }
+    }
+
+    // Mute Modal
+    function openMuteModal(email, isMuted) {
+        currentTargetEmail = email;
+        document.getElementById('modalMuteEmail').textContent = email;
+        var msgBox = document.getElementById('modalMuteMsg');
+        msgBox.style.display = 'none';
+        msgBox.className = 'status-msg';
+
+        document.getElementById('btnLiftMute').style.display = isMuted ? 'inline-block' : 'none';
+        document.getElementById('muteModal').style.display = 'flex';
+    }
+
+    async function submitMute(apply) {
+        var msgBox = document.getElementById('modalMuteMsg');
+        msgBox.style.display = 'none';
+
+        if (!apply) {
+            // Lift mute
+            try {
+                var res = await adminFetch('/api/users/unmute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: currentTargetEmail })
+                });
+                var data = await res.json();
+                if (res.ok && data.success) {
+                    msgBox.textContent = 'Мут успешно снят!';
+                    msgBox.className = 'status-msg msg-success';
+                    msgBox.style.display = 'block';
+                    setTimeout(function() { closeModal('muteModal'); refreshAccountsList(); }, 700);
+                } else {
+                    msgBox.textContent = data.error || 'Не удалось снять мут';
+                    msgBox.className = 'status-msg msg-error';
+                    msgBox.style.display = 'block';
+                }
+            } catch (e) {
+                msgBox.textContent = 'Ошибка: ' + e.message;
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+            return;
+        }
+
+        // Apply mute
+        var dur = parseInt(document.getElementById('modalMuteDuration').value);
+        var reason = document.getElementById('modalMuteReason').value.trim();
+
+        try {
+            var res = await adminFetch('/api/users/mute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: currentTargetEmail,
+                    duration_minutes: dur,
+                    reason: reason
+                })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                msgBox.textContent = 'Пользователь успешно замьючен!';
+                msgBox.className = 'status-msg msg-success';
+                msgBox.style.display = 'block';
+                setTimeout(function() { closeModal('muteModal'); refreshAccountsList(); }, 700);
+            } else {
+                msgBox.textContent = data.error || 'Ошибка при установке мута';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        } catch (e) {
+            msgBox.textContent = 'Ошибка: ' + e.message;
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+        }
+    }
+
+    // Direct Message Modal
+    function openDirectMsgModal(email) {
+        currentTargetEmail = email;
+        document.getElementById('modalDirectEmail').textContent = email;
+        document.getElementById('modalDirectText').value = '';
+        var msgBox = document.getElementById('modalDirectStatus');
+        msgBox.style.display = 'none';
+        msgBox.className = 'status-msg';
+        document.getElementById('directMsgModal').style.display = 'flex';
+        document.getElementById('modalDirectText').focus();
+    }
+
+    async function submitDirectMsg() {
+        var text = document.getElementById('modalDirectText').value.trim();
+        var msgBox = document.getElementById('modalDirectStatus');
+        if (!text) return;
+
+        try {
+            var res = await adminFetch('/api/notify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target: currentTargetEmail, message: text })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                msgBox.textContent = 'Сообщение успешно отправлено адресату!';
+                msgBox.className = 'status-msg msg-success';
+                msgBox.style.display = 'block';
+                setTimeout(function() { closeModal('directMsgModal'); }, 800);
+            } else {
+                msgBox.textContent = data.error || 'Ошибка отправки сообщения';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        } catch (e) {
+            msgBox.textContent = 'Ошибка связи: ' + e.message;
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+        }
+    }
+
+    // Password & Name Modals
+    function openPasswordModal(email) {
+        currentTargetEmail = email;
+        document.getElementById('modalPwdEmail').textContent = email;
+        document.getElementById('modalNewPassword').value = '';
+        var msgBox = document.getElementById('modalPwdMsg');
+        msgBox.style.display = 'none';
+        msgBox.className = 'status-msg';
+        document.getElementById('passwordModal').style.display = 'flex';
+        document.getElementById('modalNewPassword').focus();
+    }
+
+    function openNameModal(email, currentName) {
+        currentTargetEmail = email;
+        document.getElementById('modalNameEmail').textContent = email;
+        document.getElementById('modalNewName').value = currentName || '';
+        var msgBox = document.getElementById('modalNameMsg');
+        msgBox.style.display = 'none';
+        msgBox.className = 'status-msg';
+        document.getElementById('nameModal').style.display = 'flex';
+        document.getElementById('modalNewName').focus();
+    }
+
+    function closeModal(modalId) {
+        document.getElementById(modalId).style.display = 'none';
+        currentTargetEmail = '';
+    }
+
+    async function submitPasswordChange() {
+        var newPwd = document.getElementById('modalNewPassword').value;
+        var msgBox = document.getElementById('modalPwdMsg');
+        if (!newPwd) {
+            msgBox.textContent = 'Пароль не может быть пустым!';
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+            return;
+        }
+
+        try {
+            var res = await adminFetch('/api/users/update_password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: currentTargetEmail, password: newPwd })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                msgBox.textContent = 'Пароль успешно изменен!';
+                msgBox.className = 'status-msg msg-success';
+                msgBox.style.display = 'block';
+                setTimeout(function() { closeModal('passwordModal'); }, 800);
+            } else {
+                msgBox.textContent = data.error || 'Ошибка смены пароля';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        } catch (err) {
+            msgBox.textContent = 'Ошибка связи: ' + err.message;
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+        }
+    }
+
+    async function submitNameChange() {
+        var newName = document.getElementById('modalNewName').value.trim();
+        var msgBox = document.getElementById('modalNameMsg');
+
+        try {
+            var res = await adminFetch('/api/users/update_name', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: currentTargetEmail, friendly_name: newName })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                msgBox.textContent = 'Отображаемое имя успешно обновлено!';
+                msgBox.className = 'status-msg msg-success';
+                msgBox.style.display = 'block';
+                setTimeout(function() {
+                    closeModal('nameModal');
+                    refreshAccountsList();
+                }, 700);
+            } else {
+                msgBox.textContent = data.error || 'Ошибка обновления имени';
+                msgBox.className = 'status-msg msg-error';
+                msgBox.style.display = 'block';
+            }
+        } catch (err) {
+            msgBox.textContent = 'Ошибка связи: ' + err.message;
+            msgBox.className = 'status-msg msg-error';
+            msgBox.style.display = 'block';
+        }
+    }
+
+    async function disconnectUser(email) {
+        if (!confirm('Принудительно отключить активную сессию пользователя ' + email + '?')) return;
+        try {
+            var res = await adminFetch('/api/users/disconnect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                refreshAccountsList();
+                refreshServerStatus();
+            } else {
+                alert(data.error || 'Не удалось отключить пользователя');
+            }
+        } catch (err) {
+            alert('Ошибка сети: ' + err.message);
+        }
+    }
+
+    async function deleteUser(email) {
+        if (!confirm('ВНИМАНИЕ: Вы действительно хотите удалить учетную запись ' + email + '?\\n\\nВсе контакты, группы и сообщения этого пользователя будут безвозвратно стерты.')) return;
+        try {
+            var res = await adminFetch('/api/users/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email })
+            });
+            var data = await res.json();
+            if (res.ok && data.success) {
+                refreshAccountsList();
+                refreshServerStatus();
+            } else {
+                alert(data.error || 'Не удалось удалить учетную запись');
+            }
+        } catch (err) {
+            alert('Ошибка сети: ' + err.message);
+        }
+    }
+
+    async function refreshServerStatus() {
+        try {
+            var res = await adminFetch('/api/status');
+            if (!res.ok) return;
+            var data = await res.json();
+
+            var sec = data.uptime_seconds || 0;
+            var h = Math.floor(sec / 3600);
+            var m = Math.floor((sec % 3600) / 60);
+            var s = sec % 60;
+            document.getElementById('serverUptimeText').innerHTML = '<strong>' + h + ' ч. ' + m + ' мин. ' + s + ' сек.</strong>';
+
+            var stats = data.stats || {};
+            document.getElementById('serverActiveCountText').textContent = data.active_users_count || 0;
+            document.getElementById('serverTotalUsersText').textContent = stats.total_users || 0;
+            document.getElementById('serverTotalContactsText').innerHTML = '<strong>' + (stats.total_contacts || 0) + '</strong>';
+            document.getElementById('serverTotalGroupsText').textContent = stats.total_groups || 0;
+            document.getElementById('serverPendingMsgsText').innerHTML = '<strong>' + (stats.pending_offline_messages || 0) + '</strong>';
+
+            var now = new Date();
+            var timeStr = now.toTimeString().split(' ')[0];
+            document.getElementById('lastUpdatedStatus').textContent = 'Обновлено в ' + timeStr;
+
+            var connections = data.active_users || [];
+            var tbody = document.getElementById('connectionsTableBody');
+            var rows = [];
+
+            for (var i = 0; i < connections.length; i++) {
+                var c = connections[i];
+                var isAlt = (i % 2 === 1) ? ' class="row-alt"' : '';
+                var emailEsc = escapeHtml(c.email || '');
+                var nameEsc = escapeHtml(c.friendly_name || '');
+                var peerEsc = escapeHtml(c.peer ? String(c.peer) : '');
+                var statusEsc = escapeHtml(c.status || 'NLN');
+                var clientIdEsc = escapeHtml(String(c.client_id || '0'));
+                var emailJs = (c.email || '').replace(/'/g, "\\'");
+
+                rows.push(
+                    '<tr' + isAlt + '>' +
+                    '<td><strong>' + emailEsc + '</strong></td>' +
+                    '<td>' + nameEsc + '</td>' +
+                    '<td><span class="code-font">' + peerEsc + '</span></td>' +
+                    '<td><span style="color: #008000; font-weight: bold;">' + statusEsc + '</span></td>' +
+                    '<td><span class="code-font">' + clientIdEsc + '</span></td>' +
+                    '<td align="center">' +
+                        '<button type="button" class="btn-classic btn-sm btn-warn" onclick="disconnectUser(\'' + emailJs + '\')">Отключить</button>' +
+                    '</td>' +
+                    '</tr>'
+                );
+            }
+
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" align="center" style="color: #666; padding: 12px;">Нет активных подключений в данный момент</td></tr>';
+            } else {
+                tbody.innerHTML = rows.join('');
+            }
+        } catch (e) {
+            console.error('Error refreshing server status:', e);
+        }
+    }
+
+    function toggleAutoRefresh(enabled) {
+        if (autoRefreshTimer) {
+            clearInterval(autoRefreshTimer);
+            autoRefreshTimer = null;
+        }
+        if (enabled) {
+            autoRefreshTimer = setInterval(function() {
+                var activePane = document.querySelector('.tab-pane.active');
+                if (activePane && activePane.id === 'pane-server') {
+                    refreshServerStatus();
+                }
+            }, 5000);
+        }
+    }
+</script>
+
+</body>
+</html>
