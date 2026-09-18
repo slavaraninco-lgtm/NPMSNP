@@ -83,6 +83,41 @@ class NSClientHandler:
             return True
         return False
 
+    def get_effective_host(self) -> str:
+        """
+        Determines the most accurate IP or hostname to report to this client.
+        1. If external_host was explicitly configured to a real domain or IP (not localhost/0.0.0.0), use it.
+        2. If the client connected to a specific non-loopback network interface (sockname[0]), use that IP.
+        3. If client is remote (peername[0] is not 127.0.0.1) and external_host is loopback, try to detect outward IP.
+        4. Fallback to external_host or '127.0.0.1'.
+        """
+        if self.external_host and self.external_host not in ("127.0.0.1", "0.0.0.0", "localhost"):
+            return self.external_host
+
+        sockname = self.writer.get_extra_info("sockname") if self.writer else None
+        if sockname and isinstance(sockname, tuple) and sockname[0]:
+            local_ip = str(sockname[0])
+            if local_ip not in ("0.0.0.0", "127.0.0.1", "::1"):
+                return local_ip
+
+        peername = self.writer.get_extra_info("peername") if self.writer else None
+        if peername and isinstance(peername, tuple) and peername[0]:
+            peer_ip = str(peername[0])
+            if peer_ip not in ("127.0.0.1", "::1", "localhost"):
+                try:
+                    import socket
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.settimeout(0.5)
+                    s.connect(("8.8.8.8", 80))
+                    ip = s.getsockname()[0]
+                    s.close()
+                    if ip and not ip.startswith("127."):
+                        return ip
+                except Exception:
+                    pass
+
+        return self.external_host or "127.0.0.1"
+
     async def run(self) -> None:
         """Main receive loop for the NS connection."""
         logger.info(f"NS Client connected from {self.peername}")
@@ -220,7 +255,8 @@ class NSClientHandler:
                 self.email = a.strip()
                 break
 
-        download_url = f"http://{self.external_host}:{self.http_port}/"
+        host = self.get_effective_host()
+        download_url = f"http://{host}:{self.http_port}/"
         info_url = download_url
         self.send_cmd("CVR", trid, client_ver, client_ver, client_ver, download_url, info_url)
 
@@ -262,13 +298,28 @@ class NSClientHandler:
                 response_hash = args[3].strip() if len(args) > 3 else ""
                 user = self.db.get_user(self.email)
                 if not user:
+                    logger.warning(f"MD5 auth failed: user '{self.email}' not found in database.")
+                    self.send_error(MSNPError.AUTH_FAILED, trid)
+                    self.close()
+                    return
+
+                if user.password.startswith("enc:"):
+                    logger.error(
+                        f"MD5 auth failed: password for '{self.email}' could NOT be decrypted from database! "
+                        f"Please ensure 'cryptography' library is installed ('pip install cryptography') and MSNP_DB_SECRET_KEY matches."
+                    )
                     self.send_error(MSNPError.AUTH_FAILED, trid)
                     self.close()
                     return
 
                 if self.auth_manager.verify_md5_response(self.email, response_hash, user.password):
+                    logger.info(f"MD5 authentication successful for {self.email}")
                     await self._login_successful(trid, user)
                 else:
+                    logger.warning(
+                        f"MD5 auth failed for '{self.email}': password mismatch! "
+                        f"Check password in client or reset it via Web Admin or 'python reset_user_password.py {self.email} <password>'."
+                    )
                     self.send_error(MSNPError.AUTH_FAILED, trid)
                     self.close()
 
@@ -724,10 +775,12 @@ class NSClientHandler:
         if dest == "SB":
             # Allocate chat room and cookie
             session_id, cookie = self.switchboard_manager.allocate_session(self.email)
-            sb_addr = f"{self.external_host}:{self.sb_port}"
+            host = self.get_effective_host()
+            sb_addr = f"{host}:{self.sb_port}"
             self.send_cmd("XFR", trid, "SB", sb_addr, "CKI", cookie)
         elif dest == "NS":
-            ns_addr = f"{self.external_host}:{self.ns_port}"
+            host = self.get_effective_host()
+            ns_addr = f"{host}:{self.ns_port}"
             self.send_cmd("XFR", trid, "NS", ns_addr, "0", ns_addr)
         else:
             self.send_error(MSNPError.INVALID_PARAMETER, trid)
@@ -789,7 +842,8 @@ class NSClientHandler:
     async def _cmd_url(self, args: List[str], payload: Optional[bytes]) -> None:
         # URL trid [type]
         trid = args[0] if args else "1"
-        self.send_cmd("URL", trid, f"http://{self.external_host}:{self.http_port}/", "0")
+        host = self.get_effective_host()
+        self.send_cmd("URL", trid, f"http://{host}:{self.http_port}/", "0")
 
     async def _cmd_qry(self, args: List[str], payload: Optional[bytes]) -> None:
         # QRY trid [response]
@@ -827,5 +881,8 @@ class NSClientHandler:
     def send_rng(self, session_id: int, sb_host: str, sb_port: int, cookie: str,
                  caller_email: str, caller_friendly_name: str) -> None:
         """Sends Switchboard Ringing invitation (RNG) to this callee."""
-        sb_addr = f"{sb_host}:{sb_port}"
+        effective_sb_host = sb_host
+        if not effective_sb_host or effective_sb_host in ("127.0.0.1", "localhost", "0.0.0.0"):
+            effective_sb_host = self.get_effective_host()
+        sb_addr = f"{effective_sb_host}:{sb_port}"
         self.send_cmd("RNG", session_id, sb_addr, "CKI", cookie, caller_email, caller_friendly_name or caller_email)

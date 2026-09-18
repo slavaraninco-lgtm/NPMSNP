@@ -111,6 +111,12 @@ class MSNPServer:
         server_name = getattr(config, "SERVER_NAME", "NPMSNP Server")
         version = getattr(config, "SERVER_VERSION", "1.0.0")
 
+        crypto_warning = ""
+        try:
+            import cryptography
+        except ImportError:
+            crypto_warning = "\n  [WARNING] 'cryptography' library NOT INSTALLED! Encrypted passwords cannot decrypt!\n  Run: pip install cryptography (or: pip install -r requirements.txt)\n================================================================="
+
         banner = rf"""
 =================================================================
   _   _ _____  __  __ _____ _   _ _____  
@@ -124,9 +130,15 @@ class MSNPServer:
 =================================================================
   * Project Name            : {project_name}
   * Notification Server (NS): {self.external_host}:{self.ns_port}
-  * Switchboard Server  (SB): {self.external_host}:{self.sb_port}
+  * Switchboard Server  (SB): {self.external_host}:{self.sb_port} (Chats & Messaging)
   * Web Admin Dashboard     : http://{self.external_host}:{self.http_port}/
   * SQLite Database         : {os.path.abspath(self.db_path)}
+================================================================={crypto_warning}
+  [NOTE FOR LINUX / REMOTE / LAN]:
+  - Both port {self.ns_port} (NS) AND port {self.sb_port} (SB / Chats) must be OPEN in firewall:
+      sudo ufw allow {self.ns_port}/tcp && sudo ufw allow {self.sb_port}/tcp
+  - If clients cannot exchange messages, specify:
+      python server.py --external-host <YOUR_IP>
 =================================================================
 """
         print(banner)

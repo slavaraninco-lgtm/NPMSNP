@@ -6,9 +6,12 @@ never in plaintext.
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 from typing import Optional
+
+logger = logging.getLogger("MSNP.Security")
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -131,8 +134,15 @@ def decrypt_password(ciphertext: str, secret_key: Optional[str] = None) -> str:
             f = _get_fernet_instance(key)
             decrypted = f.decrypt(token.encode("ascii")).decode("utf-8")
             return decrypted
-        except (InvalidToken, Exception):
-            pass
+        except InvalidToken:
+            logger.warning("Fernet decryption failed: Invalid token or secret key mismatch!")
+        except Exception as ex:
+            logger.warning(f"Fernet decryption error: {ex}")
+    elif token.startswith("gAAAAA"):
+        logger.error(
+            "Cannot decrypt Fernet password token: 'cryptography' library is not installed! "
+            "Run 'pip install cryptography' or 'pip install -r requirements.txt'"
+        )
 
     # Try fallback decrypt
     fallback_res = _fallback_decrypt(token, key)

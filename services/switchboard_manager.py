@@ -249,6 +249,10 @@ class SwitchboardManager:
         service_email = getattr(config, "SERVICE_ACCOUNT_EMAIL", "system@msn.local")
         service_name = getattr(config, "SERVICE_ACCOUNT_NAME", "Служба сообщений MSN")
         host = external_host or getattr(config, "EXTERNAL_HOST", "127.0.0.1")
+        if (not host or host in ("127.0.0.1", "0.0.0.0", "localhost")) and session_manager:
+            target_sess = session_manager.get_session(target_email)
+            if target_sess and hasattr(target_sess, "get_effective_host"):
+                host = target_sess.get_effective_host()
         port = sb_port or getattr(config, "SB_PORT", 1864)
 
         # 1. Check if user already has an active 1-on-1 bot room

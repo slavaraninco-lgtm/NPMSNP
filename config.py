@@ -6,9 +6,28 @@ import os
 # Server binding
 BIND_HOST = os.getenv("MSNP_BIND_HOST", "0.0.0.0")
 
+
+def _detect_default_external_host() -> str:
+    env_host = os.getenv("MSNP_EXTERNAL_HOST")
+    if env_host:
+        return env_host.strip()
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
 # External host/IP reported to clients in XFR / RNG commands
-# For local testing, 127.0.0.1. Change to LAN IP or public domain if connecting across network.
-EXTERNAL_HOST = os.getenv("MSNP_EXTERNAL_HOST", "127.0.0.1")
+# If not explicitly set via MSNP_EXTERNAL_HOST, auto-detects outward IP of the machine
+EXTERNAL_HOST = _detect_default_external_host()
 
 # Ports
 NS_PORT = int(os.getenv("MSNP_NS_PORT", "1863"))          # Notification / Dispatch Server

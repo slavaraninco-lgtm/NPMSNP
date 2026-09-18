@@ -976,6 +976,41 @@ class TestEndToEndIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(UserStatus.BUSY), "BSY")
         self.assertEqual(str(UserStatus.OFFLINE), "FLN")
 
+    def test_effective_host_resolution(self):
+        from unittest.mock import MagicMock
+        from protocol.ns_handler import NSClientHandler
+        from protocol.sb_handler import SBClientHandler
+
+        mock_writer = MagicMock()
+        mock_writer.get_extra_info.return_value = ("10.0.0.1", 12345)
+        handler = NSClientHandler(
+            reader=MagicMock(), writer=mock_writer, db=self.server.db, auth_manager=self.server.auth_manager,
+            session_manager=self.server.session_manager, switchboard_manager=self.server.switchboard_manager,
+            external_host="192.168.1.50"
+        )
+        self.assertEqual(handler.get_effective_host(), "192.168.1.50")
+
+        # Loopback fallback to connected socket interface IP
+        handler_lan = NSClientHandler(
+            reader=MagicMock(), writer=mock_writer, db=self.server.db, auth_manager=self.server.auth_manager,
+            session_manager=self.server.session_manager, switchboard_manager=self.server.switchboard_manager,
+            external_host="127.0.0.1"
+        )
+        def get_extra_lan(name):
+            if name == "sockname":
+                return ("192.168.1.75", 1863)
+            return ("192.168.1.200", 54321)
+        mock_writer.get_extra_info.side_effect = get_extra_lan
+        self.assertEqual(handler_lan.get_effective_host(), "192.168.1.75")
+
+        # SBClientHandler dynamic host test
+        sb_lan = SBClientHandler(
+            reader=MagicMock(), writer=mock_writer, db=self.server.db, auth_manager=self.server.auth_manager,
+            session_manager=self.server.session_manager, switchboard_manager=self.server.switchboard_manager,
+            external_host="127.0.0.1"
+        )
+        self.assertEqual(sb_lan.get_effective_host(), "192.168.1.75")
+
 
 if __name__ == "__main__":
     unittest.main()

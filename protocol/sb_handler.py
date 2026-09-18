@@ -58,6 +58,41 @@ class SBClientHandler:
                 return bool(ns_sess.is_ansi)
         return False
 
+    def get_effective_host(self) -> str:
+        """
+        Determines the most accurate IP or hostname to report to this client.
+        1. If external_host was explicitly configured to a real domain or IP (not localhost/0.0.0.0), use it.
+        2. If the client connected to a specific non-loopback network interface (sockname[0]), use that IP.
+        3. If client is remote (peername[0] is not 127.0.0.1) and external_host is loopback, try to detect outward IP.
+        4. Fallback to external_host or '127.0.0.1'.
+        """
+        if self.external_host and self.external_host not in ("127.0.0.1", "0.0.0.0", "localhost"):
+            return self.external_host
+
+        sockname = self.writer.get_extra_info("sockname") if self.writer else None
+        if sockname and isinstance(sockname, tuple) and sockname[0]:
+            local_ip = str(sockname[0])
+            if local_ip not in ("0.0.0.0", "127.0.0.1", "::1"):
+                return local_ip
+
+        peername = self.writer.get_extra_info("peername") if self.writer else None
+        if peername and isinstance(peername, tuple) and peername[0]:
+            peer_ip = str(peername[0])
+            if peer_ip not in ("127.0.0.1", "::1", "localhost"):
+                try:
+                    import socket
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.settimeout(0.5)
+                    s.connect(("8.8.8.8", 80))
+                    ip = s.getsockname()[0]
+                    s.close()
+                    if ip and not ip.startswith("127."):
+                        return ip
+                except Exception:
+                    pass
+
+        return self.external_host or "127.0.0.1"
+
     async def run(self) -> None:
         """Main receive loop for the Switchboard connection."""
         logger.info(f"SB Client connected from {self.peername}")
@@ -157,7 +192,8 @@ class SBClientHandler:
     async def _cmd_cvr(self, args: List[str], payload: Optional[bytes]) -> None:
         trid = args[0] if args else "1"
         ver = "6.0.0602"
-        url = f"http://{self.external_host}:{self.http_port}/"
+        host = self.get_effective_host()
+        url = f"http://{host}:{self.http_port}/"
         self.send_cmd("CVR", trid, ver, ver, ver, url, url)
 
     async def _cmd_png(self, args: List[str], payload: Optional[bytes]) -> None:
@@ -282,7 +318,7 @@ class SBClientHandler:
             rem = caller_penalty["ban_remaining"]
             reason = f" Причина: {caller_penalty['ban_reason']}." if caller_penalty["ban_reason"] else ""
             msg = f"Вы не можете совершать вызовы, так как ваша учетная запись заблокирована (бан).{reason} До окончания блокировки осталось: {rem}."
-            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.external_host, self.sb_port)
+            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.get_effective_host(), self.sb_port)
             self.send_error(MSNPError.NOT_ALLOWED, trid)
             return
 
@@ -290,7 +326,7 @@ class SBClientHandler:
         callee_penalty = self.db.get_user_penalty_status(callee_email)
         if callee_penalty.get("is_banned"):
             msg = f"Пользователь {callee_email} заблокирован администрацией и не может принимать вызовы."
-            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.external_host, self.sb_port)
+            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.get_effective_host(), self.sb_port)
             self.send_error(MSNPError.PRINCIPAL_NOT_ONLINE, trid)
             return
 
@@ -329,7 +365,7 @@ class SBClientHandler:
 
         # Dispatch RNG to callee over their NS connection
         ring_sent = self.session_manager.send_switchboard_ring(
-            callee_email, self.session_id, self.external_host, self.sb_port,
+            callee_email, self.session_id, self.get_effective_host(), self.sb_port,
             callee_cookie, self.email, self.friendly_name
         )
         if not ring_sent:
@@ -353,7 +389,7 @@ class SBClientHandler:
             rem = penalty["ban_remaining"]
             reason = f" Причина: {penalty['ban_reason']}." if penalty["ban_reason"] else ""
             msg = f"Ваша учетная запись заблокирована (бан).{reason} До окончания блокировки осталось: {rem}. Вы не можете отправлять и принимать сообщения."
-            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.external_host, self.sb_port)
+            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.get_effective_host(), self.sb_port)
             return
 
         # Check if sender is muted
@@ -361,7 +397,7 @@ class SBClientHandler:
             rem = penalty["mute_remaining"]
             reason = f" Причина: {penalty['mute_reason']}." if penalty["mute_reason"] else ""
             msg = f"Вам временно ограничен доступ к отправке сообщений (мут).{reason} До окончания мута осталось: {rem}."
-            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.external_host, self.sb_port)
+            self.switchboard_manager.deliver_service_pm(self.email, msg, self.session_manager, self.get_effective_host(), self.sb_port)
             return
 
         # Check if caller is in a room with the service bot alone
@@ -384,7 +420,7 @@ class SBClientHandler:
                     self.switchboard_manager.deliver_service_pm(
                         self.email,
                         f"Сообщение не доставлено: пользователь {target} заблокирован администрацией.",
-                        self.session_manager, self.external_host, self.sb_port
+                        self.session_manager, self.get_effective_host(), self.sb_port
                     )
                     return
 
@@ -403,7 +439,7 @@ class SBClientHandler:
                 self.switchboard_manager.deliver_service_pm(
                     self.email,
                     f"Сообщение не доставлено: пользователь {b_user} заблокирован администрацией.",
-                    self.session_manager, self.external_host, self.sb_port
+                    self.session_manager, self.get_effective_host(), self.sb_port
                 )
 
     async def _cmd_not(self, args: List[str], payload: Optional[bytes]) -> None:
