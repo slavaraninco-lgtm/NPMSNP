@@ -43,6 +43,9 @@ class UserStatus(str, Enum):
     HIDDEN = "HDN"     # Appear Offline
     OFFLINE = "FLN"    # Offline
 
+    def __str__(self) -> str:
+        return self.value
+
 
 # MSNP Numeric Error Codes
 class MSNPError:

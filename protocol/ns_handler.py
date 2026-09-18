@@ -480,16 +480,40 @@ class NSClientHandler:
         self.db.mark_offline_messages_delivered(self.email)
 
     async def _cmd_rea(self, args: List[str], payload: Optional[bytes]) -> None:
-        # REA trid email new_friendly_name
+        # REA trid [email] new_friendly_name
+        # If email matches self.email (or is omitted), update user's own display name.
+        # If email is a contact's email, update contact's nickname in address book.
+        if len(args) < 2:
+            return
         trid = args[0]
-        new_name = args[2] if len(args) > 2 else (args[1] if len(args) > 1 else "")
-        self.friendly_name = new_name
-        self.db.update_friendly_name(self.email, new_name)
+        if len(args) >= 3 and "@" in args[1]:
+            target_email = args[1].strip()
+            raw_name = " ".join(args[2:])
+        elif len(args) == 2 and "@" not in args[1]:
+            target_email = self.email
+            raw_name = args[1]
+        elif len(args) == 2 and "@" in args[1]:
+            target_email = args[1].strip()
+            raw_name = target_email.split("@")[0]
+        else:
+            target_email = self.email
+            raw_name = " ".join(args[1:])
+
+        new_name = unquote(raw_name).strip()
+        if not new_name:
+            new_name = target_email.split("@")[0]
+
         self.sync_serial += 1
 
-        self.send_cmd("REA", trid, self.sync_serial, self.email, self.friendly_name)
-        # Broadcast updated friendly name to all online contacts
-        self.session_manager.broadcast_friendly_name_change(self.email, self.friendly_name)
+        if target_email.lower() == self.email.lower():
+            self.friendly_name = new_name
+            self.db.update_friendly_name(self.email, new_name)
+            self.send_cmd("REA", trid, self.sync_serial, self.email, self.friendly_name)
+            # Broadcast updated friendly name to all online contacts
+            self.session_manager.broadcast_friendly_name_change(self.email, self.friendly_name)
+        else:
+            self.db.update_contact_friendly_name(self.email, target_email, new_name)
+            self.send_cmd("REA", trid, self.sync_serial, target_email, new_name)
 
     async def _cmd_add(self, args: List[str], payload: Optional[bytes]) -> None:
         # ADD trid list_type contact_email friendly_name [group_id]
@@ -597,12 +621,37 @@ class NSClientHandler:
         self.send_cmd("REG", trid, self.sync_serial, group_id, new_name)
 
     async def _cmd_prp(self, args: List[str], payload: Optional[bytes]) -> None:
-        # PRP trid property_name value
-        trid = args[0]
-        prop_name = args[1].upper() if len(args) > 1 else ""
-        prop_val = args[2] if len(args) > 2 else ""
+        # PRP [trid] property_name value
+        if not args:
+            return
+        if args[0].isdigit() and len(args) >= 2:
+            trid = args[0]
+            prop_name = args[1].upper()
+            val_args = args[2:]
+        else:
+            trid = "0"
+            prop_name = args[0].upper()
+            val_args = args[1:]
+
+        if prop_name == "MFN":
+            raw_val = " ".join(val_args) if val_args else ""
+            new_name = unquote(raw_val).strip() or self.email.split("@")[0]
+            self.friendly_name = new_name
+            self.db.update_friendly_name(self.email, new_name)
+            self.sync_serial += 1
+            if trid != "0":
+                self.send_cmd("PRP", trid, "MFN", self.friendly_name)
+            else:
+                self.send_cmd("PRP", "MFN", self.friendly_name)
+            self.session_manager.broadcast_friendly_name_change(self.email, self.friendly_name)
+            return
+
+        prop_val = val_args[0] if val_args else ""
         self.db.update_phone(self.email, prop_name, prop_val)
-        self.send_cmd("PRP", trid, prop_name, prop_val)
+        if trid != "0":
+            self.send_cmd("PRP", trid, prop_name, prop_val)
+        else:
+            self.send_cmd("PRP", prop_name, prop_val)
 
     async def _cmd_png(self, args: List[str], payload: Optional[bytes]) -> None:
         # Client sends keepalive PNG -> responds with QNG 60

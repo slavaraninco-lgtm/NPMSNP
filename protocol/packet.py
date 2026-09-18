@@ -18,7 +18,10 @@ def encode_arg(arg: Any, encoding: str = "utf-8") -> str:
     """
     if arg is None:
         return ""
-    s = str(arg)
+    if hasattr(arg, "value"):
+        s = str(arg.value)
+    else:
+        s = str(arg)
     # Standard MSNP RFC 1738 percent-encoding for non-ASCII and special characters
     try:
         return quote(s, safe="@/:-_.~,={}+*&!$()#", encoding=encoding)

@@ -833,6 +833,76 @@ class TestEndToEndIntegration(unittest.IsolatedAsyncioTestCase):
 
         await client.close()
 
+    async def test_rea_and_prp_renaming(self):
+        """Tests that REA correctly differentiates between contact renaming and self renaming."""
+        client = await self._connect_client(self.ns_port)
+        await client.send("VER 1 MSNP9 CVR0\r\n")
+        await client.next_cmd()
+        await client.send("CVR 2 0x0409 winnt 5.1 i386 MSNMSGR 6.2.0137 MSMSGS alice@msn.local\r\n")
+        await client.next_cmd()
+
+        await client.send("USR 3 TWN I alice@msn.local\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "USR")
+        self.assertEqual(args[1], "OK")
+
+        # 1. Add bob@msn.local to Alice's contact list
+        await client.send("ADD 4 FL bob@msn.local Bob 0\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "ADD")
+
+        # Verify initial state: Alice friendly_name is Alice, Bob contact friendly_name is Bob
+        u_alice = self.server.db.get_user("alice@msn.local")
+        self.assertEqual(u_alice.friendly_name, "Alice")
+        c_bob = self.server.db.get_contact("alice@msn.local", "bob@msn.local")
+        self.assertEqual(c_bob.friendly_name, "Bob")
+
+        # 2. Windows Messenger scenario: Client renames contact Bob (REA trid bob@msn.local Bobby)
+        await client.send("REA 5 bob@msn.local Bobby\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "REA")
+        self.assertEqual(args[0], "5")
+        self.assertEqual(args[2], "bob@msn.local")
+        self.assertEqual(args[3], "Bobby")
+
+        # Crucial assertions:
+        # Alice's own friendly name must NOT have been changed to Bobby!
+        u_alice = self.server.db.get_user("alice@msn.local")
+        self.assertEqual(u_alice.friendly_name, "Alice")
+        # Bob's nickname in Alice's contact list must be updated
+        c_bob = self.server.db.get_contact("alice@msn.local", "bob@msn.local")
+        self.assertEqual(c_bob.friendly_name, "Bobby")
+
+        # 3. Alice renames herself via REA (REA trid alice@msn.local Alice%20Wonderland)
+        await client.send("REA 6 alice@msn.local Alice%20Wonderland\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "REA")
+        self.assertEqual(args[0], "6")
+        self.assertEqual(args[2], "alice@msn.local")
+        self.assertEqual(args[3], "Alice Wonderland")
+
+        u_alice = self.server.db.get_user("alice@msn.local")
+        self.assertEqual(u_alice.friendly_name, "Alice Wonderland")
+
+        # 4. Alice renames herself via PRP MFN (PRP 7 MFN Alice%20Queen)
+        await client.send("PRP 7 MFN Alice%20Queen\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "PRP")
+        self.assertEqual(args[0], "7")
+        self.assertEqual(args[1], "MFN")
+        self.assertEqual(args[2], "Alice Queen")
+
+        u_alice = self.server.db.get_user("alice@msn.local")
+        self.assertEqual(u_alice.friendly_name, "Alice Queen")
+
+        await client.close()
+
+    def test_user_status_stringification(self):
+        self.assertEqual(str(UserStatus.ONLINE), "NLN")
+        self.assertEqual(str(UserStatus.AWAY), "AWY")
+        self.assertEqual(str(UserStatus.BUSY), "BSY")
+        self.assertEqual(str(UserStatus.OFFLINE), "FLN")
+
 
 if __name__ == "__main__":
     unittest.main()
