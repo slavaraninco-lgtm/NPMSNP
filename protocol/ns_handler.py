@@ -471,9 +471,14 @@ class NSClientHandler:
                 self.send_cmd("LSG", g.id, g.name, 0)
 
             # Contacts list (LST)
+            # list_flags: битовая маска (FL=1, AL=2, BL=4, RL=8).
+            # Клиент MSN использует FL-флаг для отображения контакта в buddy list.
+            # Non-FL контакты (только AL/RL) принудительно отправляем с group_id=0,
+            # чтобы они не попадали в пользовательские группы и не дублировались.
             for c in contacts:
-                # LST email friendly_name list_mask group_id
-                self.send_cmd("LST", c.contact_email, c.friendly_name or c.contact_email, c.list_flags, c.group_id)
+                gid = c.group_id if (c.list_flags & ListMask.FL) else 0
+                self.send_cmd("LST", c.contact_email, c.friendly_name or c.contact_email, c.list_flags, gid)
+
 
     async def _cmd_syn(self, args: List[str], payload: Optional[bytes]) -> None:
         # SYN trid <cached_serial>
@@ -681,24 +686,38 @@ class NSClientHandler:
 
     async def _cmd_rem(self, args: List[str], payload: Optional[bytes]) -> None:
         # REM trid list_type contact_email [group_id]
+        # REM trid FL contact_email           → полностью убрать из Forward List
+        # REM trid FL contact_email group_id  → убрать из группы (переместить в Other Contacts, group_id=0)
         if len(args) < 3:
             return
         trid = args[0]
         list_type = args[1].upper()
         contact_email = args[2].strip()
 
-        flag_map = {"FL": ListMask.FL, "AL": ListMask.AL, "BL": ListMask.BL}
-        flag = flag_map.get(list_type, ListMask.FL)
-        self.db.remove_contact_flag(self.email, contact_email, int(flag))
-        self.sync_serial += 1
+        # Проверяем наличие group_id (только актуально для FL)
+        group_id = None
+        if len(args) > 3 and args[3].isdigit():
+            group_id = int(args[3])
 
+        if list_type == "FL" and group_id is not None:
+            # Клиент убирает контакт из конкретной группы, но НЕ с Forward List.
+            # Перемещаем в Other Contacts (group_id=0), флаги не трогаем.
+            self.db.move_contact_to_group(self.email, contact_email, 0)
+        else:
+            # Полное удаление из соответствующего списка
+            flag_map = {"FL": ListMask.FL, "AL": ListMask.AL, "BL": ListMask.BL}
+            flag = flag_map.get(list_type, ListMask.FL)
+            self.db.remove_contact_flag(self.email, contact_email, int(flag))
+
+            # Если удалён из FL — уведомить онлайн-контакт об удалении из RL
+            if list_type == "FL":
+                contact_sess = self.session_manager.get_session(contact_email)
+                if contact_sess:
+                    contact_sess.send_cmd("REM", "0", "RL", contact_sess.sync_serial, self.email)
+
+        self.sync_serial += 1
         self.send_cmd("REM", trid, list_type, self.sync_serial, contact_email)
 
-        # If removed from FL, notify online contact that they were removed from RL
-        if list_type == "FL":
-            contact_sess = self.session_manager.get_session(contact_email)
-            if contact_sess:
-                contact_sess.send_cmd("REM", "0", "RL", contact_sess.sync_serial, self.email)
 
     async def _cmd_adg(self, args: List[str], payload: Optional[bytes]) -> None:
         # ADG trid group_name 0

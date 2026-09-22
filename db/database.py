@@ -702,6 +702,25 @@ class Database:
                                (friendly_name, user_email, contact_email))
                 conn.commit()
 
+    def move_contact_to_group(self, user_email: str, contact_email: str, group_id: int) -> bool:
+        """
+        Перемещает контакт в указанную группу, не изменяя флаги списков.
+        group_id=0 означает "Other Contacts" (без группы).
+        Используется при REM FL contact_email group_id — клиент хочет убрать
+        контакт из группы, оставив его в Forward List.
+        """
+        user_email = user_email.strip()
+        contact_email = contact_email.strip()
+        with self._lock:
+            with self._connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE contacts SET group_id = ? WHERE user_email = ? AND contact_email = ?;",
+                    (group_id, user_email, contact_email)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+
     # Group Management
     def get_groups(self, user_email: str) -> List[GroupRecord]:
         user_email = user_email.strip()
