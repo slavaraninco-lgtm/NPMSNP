@@ -281,6 +281,7 @@ class Database:
             with self._lock:
                 with self._connection() as conn:
                     cursor = conn.cursor()
+                    cursor.execute("UPDATE groups SET name = 'Пользователи' WHERE name LIKE '%\ufffd%';")
                     cursor.execute("SELECT email FROM users WHERE LOWER(email) != LOWER(?);", (email,))
                     other_users = [r["email"] for r in cursor.fetchall()]
                     now = datetime.datetime.utcnow().isoformat()

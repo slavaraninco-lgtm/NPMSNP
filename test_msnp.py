@@ -922,7 +922,10 @@ class TestEndToEndIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], "OK")
         self.assertEqual(args[2], "ggg@msn.local")
 
-        # 4. Server auto-pushes contact list (SYN, GTC, BLP, LSG, LST) because IM2 skips SYN
+        # 4. IM2 sends CHG NLN 0 without trid, triggering contact list push
+        await client.send("CHG NLN 0\r\n")
+        cmd, args, _ = await client.next_cmd()
+        self.assertEqual(cmd, "CHG")
         cmd, args, _ = await client.next_cmd()
         self.assertEqual(cmd, "SYN")
         total_contacts = int(args[2])

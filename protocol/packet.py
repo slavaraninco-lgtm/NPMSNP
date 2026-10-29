@@ -26,6 +26,9 @@ def encode_arg(arg: Any, encoding: str = "utf-8") -> str:
     try:
         return quote(s, safe="@/:-_.~,={}+*&!$()#", encoding=encoding)
     except Exception:
+        if encoding.lower() in ("cp1251", "windows-1251"):
+            clean_s = s.encode("cp1251", errors="replace").decode("cp1251")
+            return quote(clean_s, safe="@/:-_.~,={}+*&!$()#", encoding="cp1251")
         return quote(s, safe="@/:-_.~,={}+*&!$()#", encoding="utf-8")
 
 
@@ -71,6 +74,19 @@ def decode_arg(arg: Any) -> str:
     return arg
 
 
+def is_payload_command(cmd: str, num_args: int) -> bool:
+    """Returns True if the command carries a payload with the given number of arguments."""
+    if cmd == "QRY":
+        return num_args >= 3
+    if cmd == "MSG":
+        return num_args >= 2
+    if cmd in ("UUX", "UBX", "IPG", "GCF", "ADL", "RML", "SDG", "SDC", "PUT", "VAS", "UUN", "UUM", "FQY"):
+        return num_args >= 2
+    if cmd == "NOT":
+        return num_args >= 1
+    return False
+
+
 class MSNPReader:
     """
     Stateful buffer for reading MSNP commands and payloads from a TCP stream.
@@ -105,7 +121,7 @@ class MSNPReader:
             raw_args = raw_parts[1:]
 
             # Check if this command expects a payload
-            if cmd in PAYLOAD_COMMANDS and raw_args:
+            if is_payload_command(cmd, len(raw_args)) and raw_args:
                 try:
                     payload_len = int(raw_args[-1].decode("ascii", errors="ignore"))
                 except ValueError:

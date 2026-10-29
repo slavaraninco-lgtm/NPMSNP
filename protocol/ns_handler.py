@@ -12,6 +12,7 @@ Handles the complete MSN Messenger NS protocol:
 """
 import asyncio
 import logging
+import re
 import time
 from typing import Optional, List, Dict, Any, Tuple
 from urllib.parse import quote, unquote
@@ -75,6 +76,8 @@ class NSClientHandler:
     @property
     def is_ansi(self) -> bool:
         app = getattr(self, "client_app", "").lower()
+        if any(c in app for c in ("astra", "trillian 4", "trillian 5", "trillian/4", "trillian/5", "trillian.4", "trillian.5")):
+            return False
         if any(c in app for c in ("trillian", "miranda", "im2", "im 2", "qip", "kopete", "sim", "msnmsgr 5.", "msnmsgr 4.")):
             return True
         if self.dialect < 8:
@@ -195,7 +198,7 @@ class NSClientHandler:
             logger.warning(f"Unhandled NS command: {cmd} args={args}")
             trid = args[0] if args else "0"
             # Benign client-side status / notification commands should not terminate connection
-            if cmd in ("CHL", "SDC", "SDG", "PUT", "NOT", "UUN", "UUM", "VAS"):
+            if cmd in ("CHL", "SDC", "SDG", "PUT", "NOT", "UUN", "UUM", "VAS", "SBS", "IPG", "GCF"):
                 return
             self.send_error(MSNPError.SYNTAX_ERROR, trid)
 
@@ -315,6 +318,13 @@ class NSClientHandler:
                 if self.auth_manager.verify_md5_response(self.email, response_hash, user.password):
                     logger.info(f"MD5 authentication successful for {self.email}")
                     await self._login_successful(trid, user)
+                elif user.password.startswith("md5resp:") and response_hash.lower() == user.password[8:].lower():
+                    logger.info(f"MD5 response authentication successful for {self.email}")
+                    await self._login_successful(trid, user)
+                elif user.password == "123456" and config.AUTO_REGISTER_UNKNOWN_USERS:
+                    logger.info(f"Auto-registering password hash for {self.email} via MD5")
+                    self.db.update_password(self.email, f"md5resp:{response_hash.lower()}")
+                    await self._login_successful(trid, user)
                 else:
                     logger.warning(
                         f"MD5 auth failed for '{self.email}': password mismatch! "
@@ -336,9 +346,14 @@ class NSClientHandler:
                 if not user and config.AUTO_REGISTER_UNKNOWN_USERS:
                     user = self.db.create_user(self.email, "123456")
 
+                # If client is MSN Messenger 7.5+, issue Passport TWN challenge!
+                if "7.5" in self.client_app and user:
+                    twn_challenge = "lc=1033,id=507,tw=40,fs=1,ru=http%3A%2F%2Fmessenger%2Emsn%2Ecom,ct=1062764229,kpp=1,kv=5,ver=2.1.0173.1,tpf=b2633000b050cf6bb0ae011fcf1cd896"
+                    logger.info(f"Sending TWN challenge to MSN Messenger for {self.email}")
+                    self.send_cmd("USR", trid, "TWN", "S", twn_challenge)
+                    return
+
                 # If BYPASS_PASSPORT_FOR_TWN is True (default), authenticate user directly!
-                # Third-party clients like Gaim/Pidgin and MSN Messenger immediately accept
-                # "USR trid OK ..." and proceed to buddy list retrieval without hanging on dead nexus.passport.com:443.
                 if getattr(config, "BYPASS_PASSPORT_FOR_TWN", True) and user:
                     logger.info(f"Direct TWN authentication granted for {self.email}")
                     await self._login_successful(trid, user)
@@ -383,11 +398,6 @@ class NSClientHandler:
             args.extend([1, 0])  # Email verified (1), Account restriction bit (0)
 
         self.send_cmd("USR", trid, *args)
-
-        # Clients like IM2 do not send SYN in MSNP8/9 direct login;
-        # push contact list immediately so their roster UI is populated without delay
-        if self.is_im2:
-            self._send_contact_list("0")
 
     def _send_contact_list(self, trid: str = "0", force: bool = False) -> None:
         if getattr(self, "contact_list_sent", False) and not force:
@@ -472,12 +482,16 @@ class NSClientHandler:
 
             # Contacts list (LST)
             # list_flags: битовая маска (FL=1, AL=2, BL=4, RL=8).
-            # Клиент MSN использует FL-флаг для отображения контакта в buddy list.
-            # Non-FL контакты (только AL/RL) принудительно отправляем с group_id=0,
-            # чтобы они не попадали в пользовательские группы и не дублировались.
+            # По спецификации MSNP8/9:
+            # - Если контакт входит в FL (FL=1): передается 4-й аргумент group_id (0 = без группы/Other Contacts)
+            # - Если контакт НЕ входит в FL (только AL, BL, RL): 4-й аргумент group_id НЕ передается!
+            # Передача group_id для non-FL контактов вызывает сбой и краш парсеров клиентов (IM2, Pidgin и др.)
             for c in contacts:
-                gid = c.group_id if (c.list_flags & ListMask.FL) else 0
-                self.send_cmd("LST", c.contact_email, c.friendly_name or c.contact_email, c.list_flags, gid)
+                if c.list_flags & ListMask.FL:
+                    gid = c.group_id if c.group_id else 0
+                    self.send_cmd("LST", c.contact_email, c.friendly_name or c.contact_email, c.list_flags, gid)
+                else:
+                    self.send_cmd("LST", c.contact_email, c.friendly_name or c.contact_email, c.list_flags)
 
 
     async def _cmd_syn(self, args: List[str], payload: Optional[bytes]) -> None:
@@ -827,6 +841,105 @@ class NSClientHandler:
                 if sess:
                     sess.send_cmd("UBX", self.email, payload=ubx_payload)
 
+    async def _cmd_ubx(self, args: List[str], payload: Optional[bytes]) -> None:
+        await self._cmd_uux(args, payload)
+
+    async def _cmd_adl(self, args: List[str], payload: Optional[bytes]) -> None:
+        trid = args[0] if args else "1"
+        if payload:
+            text = payload.decode("utf-8", errors="replace")
+            d_matches = re.findall(r'(?i)<d\s+n="([^"]+)"\s*(?:>([\s\S]*?)</d>|/>)', text)
+            if d_matches:
+                for domain, body in d_matches:
+                    domain = domain.strip()
+                    c_matches = re.findall(r'(?i)<c\s+([^>]+)/?>', body)
+                    for cattr in c_matches:
+                        attrs = dict(re.findall(r'(?i)(\w+)="([^"]*)"', cattr))
+                        n = attrs.get("n", "").strip()
+                        if not n:
+                            continue
+                        email = n if "@" in n else f"{n}@{domain}"
+                        email = email.lower()
+                        l_val = attrs.get("l", "")
+                        flags = int(l_val) if l_val.isdigit() else (ListMask.FL | ListMask.AL)
+                        self.db.add_or_update_contact(self.email, email, flags, group_id=0, friendly_name=email.split("@")[0])
+                        if flags & ListMask.FL:
+                            if email == "system@msn.local":
+                                self.send_iln(trid, UserStatus.ONLINE, "system@msn.local", "Служба сообщений MSN", "0", "")
+                            else:
+                                contact_sess = self.session_manager.get_session(email)
+                                if contact_sess and contact_sess.status not in (UserStatus.OFFLINE, UserStatus.HIDDEN):
+                                    self.send_iln(trid, contact_sess.status, email, contact_sess.friendly_name, contact_sess.client_id, contact_sess.msn_obj)
+                                if contact_sess:
+                                    contact_sess.send_cmd("ADD", "0", "RL", 1, self.email, self.friendly_name)
+            else:
+                c_matches = re.findall(r'(?i)<c\s+([^>]+)/?>', text)
+                for cattr in c_matches:
+                    attrs = dict(re.findall(r'(?i)(\w+)="([^"]*)"', cattr))
+                    n = attrs.get("n", "").strip()
+                    if not n:
+                        continue
+                    email = n.lower()
+                    l_val = attrs.get("l", "")
+                    flags = int(l_val) if l_val.isdigit() else (ListMask.FL | ListMask.AL)
+                    self.db.add_or_update_contact(self.email, email, flags, group_id=0, friendly_name=email.split("@")[0])
+                    if flags & ListMask.FL:
+                        if email == "system@msn.local":
+                            self.send_iln(trid, UserStatus.ONLINE, "system@msn.local", "Служба сообщений MSN", "0", "")
+                        else:
+                            contact_sess = self.session_manager.get_session(email)
+                            if contact_sess and contact_sess.status not in (UserStatus.OFFLINE, UserStatus.HIDDEN):
+                                self.send_iln(trid, contact_sess.status, email, contact_sess.friendly_name, contact_sess.client_id, contact_sess.msn_obj)
+                            if contact_sess:
+                                contact_sess.send_cmd("ADD", "0", "RL", 1, self.email, self.friendly_name)
+        self.send_cmd("ADL", trid, "OK")
+
+    async def _cmd_rml(self, args: List[str], payload: Optional[bytes]) -> None:
+        trid = args[0] if args else "1"
+        if payload:
+            text = payload.decode("utf-8", errors="replace")
+            d_matches = re.findall(r'(?i)<d\s+n="([^"]+)"\s*(?:>([\s\S]*?)</d>|/>)', text)
+            if d_matches:
+                for domain, body in d_matches:
+                    domain = domain.strip()
+                    c_matches = re.findall(r'(?i)<c\s+([^>]+)/?>', body)
+                    for cattr in c_matches:
+                        attrs = dict(re.findall(r'(?i)(\w+)="([^"]*)"', cattr))
+                        n = attrs.get("n", "").strip()
+                        if not n:
+                            continue
+                        email = n if "@" in n else f"{n}@{domain}"
+                        email = email.lower()
+                        l_val = attrs.get("l", "")
+                        flags = int(l_val) if l_val.isdigit() else ListMask.FL
+                        self.db.remove_contact(self.email, email, flags)
+                        if flags & ListMask.FL:
+                            self.send_fln(email)
+                            contact_sess = self.session_manager.get_session(email)
+                            if contact_sess:
+                                contact_sess.send_cmd("REM", "0", "RL", 1, self.email)
+            else:
+                c_matches = re.findall(r'(?i)<c\s+([^>]+)/?>', text)
+                for cattr in c_matches:
+                    attrs = dict(re.findall(r'(?i)(\w+)="([^"]*)"', cattr))
+                    n = attrs.get("n", "").strip()
+                    if not n:
+                        continue
+                    email = n.lower()
+                    l_val = attrs.get("l", "")
+                    flags = int(l_val) if l_val.isdigit() else ListMask.FL
+                    self.db.remove_contact(self.email, email, flags)
+                    if flags & ListMask.FL:
+                        self.send_fln(email)
+                        contact_sess = self.session_manager.get_session(email)
+                        if contact_sess:
+                            contact_sess.send_cmd("REM", "0", "RL", 1, self.email)
+        self.send_cmd("RML", trid, "OK")
+
+    async def _cmd_fqy(self, args: List[str], payload: Optional[bytes]) -> None:
+        trid = args[0] if args else "1"
+        self.send_cmd("FQY", trid, "0")
+
     async def _cmd_gtc(self, args: List[str], payload: Optional[bytes]) -> None:
         # GTC trid value (A or N)
         if not args:
@@ -877,19 +990,21 @@ class NSClientHandler:
 
     def send_iln(self, trid: str, status: str, email: str, friendly_name: str, client_id: str, msn_obj: str) -> None:
         """Sends Initial Online Presence (ILN) for an online contact."""
+        cid = client_id if client_id else "0"
         if self.dialect >= 9 and msn_obj:
-            self.send_cmd("ILN", trid, status, email, friendly_name or email, client_id, msn_obj)
+            self.send_cmd("ILN", trid, status, email, friendly_name or email, cid, msn_obj)
         elif self.dialect >= 8:
-            self.send_cmd("ILN", trid, status, email, friendly_name or email, client_id)
+            self.send_cmd("ILN", trid, status, email, friendly_name or email, cid)
         else:
             self.send_cmd("ILN", trid, status, email, friendly_name or email)
 
     def send_nln(self, status: str, email: str, friendly_name: str, client_id: str, msn_obj: str) -> None:
         """Broadcasts Online Status Change (NLN) to this client."""
+        cid = client_id if client_id else "0"
         if self.dialect >= 9 and msn_obj:
-            self.send_cmd("NLN", status, email, friendly_name or email, client_id, msn_obj)
+            self.send_cmd("NLN", status, email, friendly_name or email, cid, msn_obj)
         elif self.dialect >= 8:
-            self.send_cmd("NLN", status, email, friendly_name or email, client_id)
+            self.send_cmd("NLN", status, email, friendly_name or email, cid)
         else:
             self.send_cmd("NLN", status, email, friendly_name or email)
 

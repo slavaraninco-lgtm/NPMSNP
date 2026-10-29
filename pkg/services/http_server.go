@@ -1,12 +1,17 @@
 package services
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
+	"log"
+	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +22,50 @@ import (
 
 //go:embed dashboard.html
 var dashboardTemplate string
+
+type gatewaySession struct {
+	id         string
+	serverType string
+	inPipeW    *io.PipeWriter
+	outBuf     bytes.Buffer
+	outMu      sync.Mutex
+	outCond    *sync.Cond
+	lastActive time.Time
+	closed     bool
+}
+
+type gatewayVirtualConn struct {
+	r          *io.PipeReader
+	sess       *gatewaySession
+	localAddr  net.Addr
+	remoteAddr net.Addr
+}
+
+func (c *gatewayVirtualConn) Read(b []byte) (n int, err error) {
+	return c.r.Read(b)
+}
+
+func (c *gatewayVirtualConn) Write(b []byte) (n int, err error) {
+	c.sess.outMu.Lock()
+	defer c.sess.outMu.Unlock()
+	n, err = c.sess.outBuf.Write(b)
+	c.sess.outCond.Broadcast()
+	return n, err
+}
+
+func (c *gatewayVirtualConn) Close() error {
+	c.sess.outMu.Lock()
+	c.sess.closed = true
+	c.sess.outCond.Broadcast()
+	c.sess.outMu.Unlock()
+	return c.r.Close()
+}
+
+func (c *gatewayVirtualConn) LocalAddr() net.Addr                { return c.localAddr }
+func (c *gatewayVirtualConn) RemoteAddr() net.Addr               { return c.remoteAddr }
+func (c *gatewayVirtualConn) SetDeadline(t time.Time) error      { return nil }
+func (c *gatewayVirtualConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *gatewayVirtualConn) SetWriteDeadline(t time.Time) error { return nil }
 
 type HTTPServer struct {
 	host               string
@@ -29,6 +78,11 @@ type HTTPServer struct {
 	autoRegister       bool
 	adminPassword      string
 	server             *http.Server
+	server80           *http.Server
+	gatewaySessions    map[string]*gatewaySession
+	gatewayMu          sync.Mutex
+	nsHandlerFactory   func(conn net.Conn) func()
+	sbHandlerFactory   func(conn net.Conn) func()
 	adminSessions      map[string]time.Time
 	sessionsMu         sync.RWMutex
 	startTime          time.Time
@@ -48,10 +102,19 @@ func NewHTTPServer(host string, port int, externalHost string, database *db.Data
 		switchboardManager: switchboardManager,
 		autoRegister:       autoRegister,
 		adminPassword:      adminPassword,
+		gatewaySessions:    make(map[string]*gatewaySession),
 		adminSessions:      make(map[string]time.Time),
 		startTime:          time.Now(),
 	}
 	return s
+}
+
+func (s *HTTPServer) SetNSHandlerFactory(fn func(conn net.Conn) func()) {
+	s.nsHandlerFactory = fn
+}
+
+func (s *HTTPServer) SetSBHandlerFactory(fn func(conn net.Conn) func()) {
+	s.sbHandlerFactory = fn
 }
 
 func (s *HTTPServer) Start() error {
@@ -59,9 +122,16 @@ func (s *HTTPServer) Start() error {
 
 	// Passport / Nexus endpoints
 	mux.HandleFunc("/rdr/pprdr.asp", s.handlePassportNexus)
+	mux.HandleFunc("/pprdr.asp", s.handlePassportNexus)
 	mux.HandleFunc("/nexus-mock", s.handlePassportNexus)
 	mux.HandleFunc("/login-mock", s.handlePassportLogin)
 	mux.HandleFunc("/login.srf", s.handlePassportLogin)
+	mux.HandleFunc("/login.aspx", s.handlePassportLogin)
+	mux.HandleFunc("/ppsecure/post.srf", s.handlePassportLogin)
+
+	// MSNP HTTP Gateway (Miranda IM/NG and HTTP-tunneling clients)
+	mux.HandleFunc("/gateway/gateway.dll", s.handleGateway)
+	mux.HandleFunc("/gateway.dll", s.handleGateway)
 
 	// Admin Web & API
 	mux.HandleFunc("/", s.handleDashboard)
@@ -105,10 +175,37 @@ func (s *HTTPServer) Start() error {
 		_ = s.server.Serve(ln)
 	}()
 
+	// Port 80 Gateway & Passport listener for clients demanding port 80 (e.g. newer Miranda versions, MSN Messenger nexus)
+	if s.port != 80 {
+		addr80 := fmt.Sprintf("%s:80", s.host)
+		ln80, err := net.Listen("tcp", addr80)
+		if err == nil {
+			s.server80 = &http.Server{
+				Addr:    addr80,
+				Handler: mux,
+			}
+			go func() {
+				_ = s.server80.Serve(ln80)
+			}()
+			log.Printf("[HTTP] Port 80 Gateway & Passport listener active on %s:80", s.host)
+		} else {
+			log.Printf("[HTTP] Port 80 not available (%v); HTTP gateway available on port %d", err, s.port)
+		}
+	}
+
 	return nil
 }
 
 func (s *HTTPServer) Stop() error {
+	s.gatewayMu.Lock()
+	for _, sess := range s.gatewaySessions {
+		_ = sess.inPipeW.Close()
+	}
+	s.gatewayMu.Unlock()
+
+	if s.server80 != nil {
+		_ = s.server80.Close()
+	}
 	if s.server != nil {
 		return s.server.Close()
 	}
@@ -122,9 +219,21 @@ func (s *HTTPServer) handlePassportNexus(w http.ResponseWriter, r *http.Request)
 	if host == "" || host == "0.0.0.0" {
 		host = "127.0.0.1"
 	}
-	loginURL := fmt.Sprintf("http://%s:%d/login.srf", host, s.port)
-	passportHeader := fmt.Sprintf("DARes=%s,DALogin=%s,DAReg=http://%s:%d/",
-		loginURL, loginURL, host, s.port)
+	reqHost := r.Host
+	if reqHost != "" {
+		if h, _, err := net.SplitHostPort(reqHost); err == nil {
+			reqHost = h
+		}
+	} else {
+		reqHost = host
+	}
+
+	loginURL := fmt.Sprintf("http://%s:%d/login.srf", reqHost, s.port)
+	if s.port == 80 {
+		loginURL = fmt.Sprintf("http://%s/login.srf", reqHost)
+	}
+	passportHeader := fmt.Sprintf("DARealm=Passport1.4,DALogin=%s,DAReg=http://%s:%d/",
+		loginURL, reqHost, s.port)
 
 	w.Header().Set("PassportURLs", passportHeader)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -132,8 +241,179 @@ func (s *HTTPServer) handlePassportNexus(w http.ResponseWriter, r *http.Request)
 	_, _ = w.Write([]byte("<html><body>Nexus Mock OK</body></html>"))
 }
 
+func (s *HTTPServer) handleGateway(w http.ResponseWriter, r *http.Request) {
+	action := r.URL.Query().Get("Action")
+	if action == "" {
+		action = r.URL.Query().Get("action")
+	}
+
+	sessionID := r.URL.Query().Get("SessionID")
+	if sessionID == "" {
+		sessionID = r.URL.Query().Get("sessionid")
+	}
+	if sessionID == "" {
+		xHeader := r.Header.Get("X-MSN-Messenger")
+		if strings.Contains(xHeader, "SessionID=") {
+			for _, part := range strings.Split(xHeader, ";") {
+				part = strings.TrimSpace(part)
+				if strings.HasPrefix(strings.ToLower(part), "sessionid=") {
+					sessionID = strings.TrimPrefix(part, part[:10])
+					break
+				}
+			}
+		}
+	}
+
+	serverType := strings.ToUpper(r.URL.Query().Get("Server"))
+	if serverType == "" {
+		serverType = "NS"
+	}
+
+	effectiveHost := s.externalHost
+	if effectiveHost == "" || effectiveHost == "0.0.0.0" {
+		effectiveHost = "127.0.0.1"
+	}
+
+	bodyBytes, _ := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+
+	var sess *gatewaySession
+
+	if strings.EqualFold(action, "open") || sessionID == "" {
+		sessID := fmt.Sprintf("%d.%d", time.Now().UnixNano(), rand.Intn(1000000))
+		pipeR, pipeW := io.Pipe()
+		sess = &gatewaySession{
+			id:         sessID,
+			serverType: serverType,
+			inPipeW:    pipeW,
+			lastActive: time.Now(),
+		}
+		sess.outCond = sync.NewCond(&sess.outMu)
+
+		s.gatewayMu.Lock()
+		s.gatewaySessions[sessID] = sess
+		s.gatewayMu.Unlock()
+
+		vConn := &gatewayVirtualConn{
+			r:          pipeR,
+			sess:       sess,
+			localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: s.port},
+			remoteAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50000},
+		}
+
+		if serverType == "SB" && s.sbHandlerFactory != nil {
+			run := s.sbHandlerFactory(vConn)
+			go run()
+		} else if s.nsHandlerFactory != nil {
+			run := s.nsHandlerFactory(vConn)
+			go run()
+		}
+
+		sessionID = sessID
+	} else {
+		s.gatewayMu.Lock()
+		sess = s.gatewaySessions[sessionID]
+		s.gatewayMu.Unlock()
+	}
+
+	if sess == nil {
+		w.Header().Set("Content-Type", "application/x-msn-messenger")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	sess.lastActive = time.Now()
+
+	if strings.EqualFold(action, "close") {
+		s.gatewayMu.Lock()
+		delete(s.gatewaySessions, sessionID)
+		s.gatewayMu.Unlock()
+		_ = sess.inPipeW.Close()
+		w.Header().Set("Content-Type", "application/x-msn-messenger")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if len(bodyBytes) > 0 {
+		_, _ = sess.inPipeW.Write(bodyBytes)
+	}
+
+	sess.outMu.Lock()
+	if sess.outBuf.Len() == 0 && !sess.closed {
+		done := make(chan struct{})
+		go func() {
+			sess.outMu.Lock()
+			defer sess.outMu.Unlock()
+			if sess.outBuf.Len() == 0 && !sess.closed {
+				sess.outCond.Wait()
+			}
+			close(done)
+		}()
+		sess.outMu.Unlock()
+
+		select {
+		case <-done:
+		case <-time.After(300 * time.Millisecond):
+		}
+		sess.outMu.Lock()
+	}
+
+	respBytes := sess.outBuf.Bytes()
+	copied := make([]byte, len(respBytes))
+	copy(copied, respBytes)
+	sess.outBuf.Reset()
+	sess.outMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/x-msn-messenger")
+	w.Header().Set("X-MSN-Messenger", fmt.Sprintf("SessionID=%s; GW-IP=%s", sessionID, effectiveHost))
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(copied)
+}
+
 func (s *HTTPServer) handlePassportLogin(w http.ResponseWriter, r *http.Request) {
-	ticket := s.authManager.CreateTWNTicket("auto@msn.local", 1*time.Hour)
+	email := ""
+	authHeader := r.Header.Get("Authorization")
+	if strings.Contains(strings.ToLower(authHeader), "passport1.4") {
+		pairs := strings.Split(strings.TrimPrefix(authHeader, "Passport1.4 "), ",")
+		for _, pair := range pairs {
+			if strings.Contains(pair, "=") {
+				kv := strings.SplitN(pair, "=", 2)
+				k := strings.ToLower(strings.TrimSpace(kv[0]))
+				v := strings.TrimSpace(kv[1])
+				if unquoted, err := url.QueryUnescape(v); err == nil {
+					v = unquoted
+				}
+				if k == "sign-in" {
+					email = v
+				}
+			}
+		}
+	}
+
+	if email == "" {
+		_ = r.ParseForm()
+		if r.FormValue("email") != "" {
+			email = r.FormValue("email")
+		} else if r.FormValue("sign-in") != "" {
+			email = r.FormValue("sign-in")
+		}
+	}
+
+	if email == "" {
+		email = "auto@msn.local"
+	}
+
+	// Ensure user exists if autoRegister is true
+	if s.autoRegister && email != "" && strings.Contains(email, "@") {
+		u, _ := s.database.GetUser(email)
+		if u == nil {
+			_, _ = s.database.CreateUser(email, "123456", "")
+		}
+	}
+
+	ticket := s.authManager.CreateTWNTicket(email, 24*time.Hour)
 	info := fmt.Sprintf("Passport1.4 da-status=success,tkt=%s,from-PP='%s&p=profile_test',ru=http://messenger.msn.com", ticket, ticket)
 
 	w.Header().Set("Authentication-Info", info)

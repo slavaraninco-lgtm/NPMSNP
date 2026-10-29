@@ -23,8 +23,10 @@ class AuthManager:
 
     # MD5 Challenge-Response
     def create_md5_challenge(self, email: str) -> str:
-        """Generates a random challenge string for MD5 authentication"""
-        challenge = str(secrets.randbelow(900000000) + 100000000)
+        """Generates a deterministic challenge string for MD5 authentication based on secret and email"""
+        digest = hashlib.md5(f"{self.secret_key}:{email.lower()}:msnp_salt_2026".encode("utf-8")).digest()
+        val = int.from_bytes(digest[:4], "big")
+        challenge = str((val % 900000000) + 100000000)
         self._md5_challenges[email.lower()] = (challenge, time.time())
         return challenge
 

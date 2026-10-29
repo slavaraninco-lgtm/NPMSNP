@@ -6,7 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +44,7 @@ type NSClientHandler struct {
 	clientApp           string
 	authType            string
 	peerName            string
+	profile             ClientProfile
 	closed              bool
 	closeOnce           sync.Once
 }
@@ -73,6 +74,7 @@ func NewNSClientHandler(conn net.Conn, database *db.Database, authManager *proto
 		clientID:           "0",
 		syncSerial:         1,
 		peerName:           peer,
+		profile:            NewDefaultProfile(),
 	}
 }
 
@@ -112,7 +114,15 @@ func (h *NSClientHandler) IsIM2() bool {
 }
 
 func (h *NSClientHandler) IsANSI() bool {
+	if h.profile != nil {
+		return h.profile.IsANSI()
+	}
 	app := strings.ToLower(h.clientApp)
+	// Trillian Astra (4.x / 5.x) is modern Unicode UTF-8
+	if strings.Contains(app, "astra") || strings.Contains(app, "trillian 4") || strings.Contains(app, "trillian 5") ||
+		strings.Contains(app, "trillian/4") || strings.Contains(app, "trillian/5") || strings.Contains(app, "trillian.4") || strings.Contains(app, "trillian.5") {
+		return false
+	}
 	for _, c := range []string{"trillian", "miranda", "im2", "im 2", "qip", "kopete", "sim", "msnmsgr 5.", "msnmsgr 4."} {
 		if strings.Contains(app, c) {
 			return true
@@ -199,9 +209,12 @@ func (h *NSClientHandler) SendNLN(status, email, friendlyName, clientID, msnObj 
 	if friendlyName == "" {
 		friendlyName = email
 	}
-	if h.dialect >= 9 {
+	if clientID == "" {
+		clientID = "0"
+	}
+	if h.dialect >= 9 && msnObj != "" {
 		h.SendCmd("NLN", status, email, friendlyName, clientID, msnObj)
-	} else if h.dialect == 8 {
+	} else if h.dialect >= 8 {
 		h.SendCmd("NLN", status, email, friendlyName, clientID)
 	} else {
 		h.SendCmd("NLN", status, email, friendlyName)
@@ -216,9 +229,12 @@ func (h *NSClientHandler) SendILN(trid, status, email, friendlyName, clientID, m
 	if friendlyName == "" {
 		friendlyName = email
 	}
-	if h.dialect >= 9 {
+	if clientID == "" {
+		clientID = "0"
+	}
+	if h.dialect >= 9 && msnObj != "" {
 		h.SendCmd("ILN", trid, status, email, friendlyName, clientID, msnObj)
-	} else if h.dialect == 8 {
+	} else if h.dialect >= 8 {
 		h.SendCmd("ILN", trid, status, email, friendlyName, clientID)
 	} else {
 		h.SendCmd("ILN", trid, status, email, friendlyName)
@@ -312,6 +328,12 @@ func (h *NSClientHandler) handleCommand(pkt *protocol.Packet) {
 			h.dialect = 9
 		}
 
+		if h.profile == nil || h.profile.Name() == "Standard MSNP" {
+			if h.dialect <= 5 {
+				h.profile = NewMSNProfile("", h.dialect)
+			}
+		}
+
 		respArgs := []interface{}{trid, chosen}
 		for _, o := range offered {
 			if strings.HasPrefix(o, "CVR") {
@@ -328,11 +350,40 @@ func (h *NSClientHandler) handleCommand(pkt *protocol.Packet) {
 			trid = args[0]
 		}
 		if len(args) > 5 {
-			h.clientApp = fmt.Sprintf("%s %s", args[5], strings.Join(args[6:], " "))
+			h.clientApp = strings.ToLower(strings.Join(args, " "))
+			h.profile = DetectClientProfile(h.clientApp, h.dialect)
 		}
+		if h.profile != nil && h.profile.HandleCVR(h, args) {
+			return
+		}
+		clientVer := "6.0.0602"
+		if len(args) > 5 {
+			for _, a := range args[5:] {
+				if strings.Contains(a, ".") && anyDigit(a) {
+					clientVer = a
+					break
+				}
+			}
+			if clientVer == "6.0.0602" {
+				for _, a := range args[5:] {
+					if anyDigit(a) {
+						clientVer = a
+						break
+					}
+				}
+			}
+		}
+
+		for _, a := range args {
+			if strings.Contains(a, "@") && strings.Contains(a, ".") && h.email == "" {
+				h.email = strings.TrimSpace(a)
+				break
+			}
+		}
+
 		host := h.GetEffectiveHost()
 		url := fmt.Sprintf("http://%s:%d/", host, h.httpPort)
-		h.SendCmd("CVR", trid, "6.0.0602", "6.0.0602", "6.0.0602", url, url)
+		h.SendCmd("CVR", trid, clientVer, clientVer, clientVer, url, url)
 
 	case "INF":
 		// INF <trid> -> respond with auth type (MD5)
@@ -344,30 +395,64 @@ func (h *NSClientHandler) handleCommand(pkt *protocol.Packet) {
 
 	case "USR":
 		// USR <trid> <auth_type> <stage> ...
+		if h.profile != nil && h.profile.HandleUSR(h, args) {
+			return
+		}
 		h.handleUSR(args)
 
 	case "CHG":
 		// CHG <trid> <status> [client_id] [msn_obj]
-		if len(args) < 2 {
+		// Or clients like IM2 without trid: CHG <status> [client_id] [msn_obj]
+		if h.profile != nil && h.profile.HandleCHG(h, args) {
 			return
 		}
-		trid := args[0]
-		newStatus := strings.ToUpper(args[1])
-		h.status = newStatus
+		if len(args) == 0 {
+			return
+		}
 
-		if len(args) > 2 {
-			h.clientID = args[2]
+		statusValues := map[string]bool{
+			"NLN": true, "BSY": true, "IDL": true, "BRB": true,
+			"AWY": true, "PHN": true, "LUN": true, "HDN": true, "FLN": true,
 		}
-		if len(args) > 3 {
-			h.msnObj = strings.Join(args[3:], " ")
+
+		trid := "0"
+		newStatus := "NLN"
+		clientID := "0"
+		msnObj := ""
+
+		if statusValues[strings.ToUpper(args[0])] {
+			trid = "0"
+			newStatus = strings.ToUpper(args[0])
+			if len(args) > 1 {
+				clientID = args[1]
+			}
+			if len(args) > 2 {
+				msnObj = strings.Join(args[2:], " ")
+			}
+		} else if len(args) >= 2 {
+			trid = args[0]
+			newStatus = strings.ToUpper(args[1])
+			if len(args) > 2 {
+				clientID = args[2]
+			}
+			if len(args) > 3 {
+				msnObj = strings.Join(args[3:], " ")
+			}
+		} else {
+			trid = args[0]
+			newStatus = "NLN"
 		}
+
+		h.status = newStatus
+		h.clientID = clientID
+		h.msnObj = msnObj
 
 		_ = h.database.UpdateUserStatus(h.email, h.status, &h.clientID, &h.customMessage, &h.msnObj)
 
 		// Send CHG response
-		if len(args) > 3 && h.dialect >= 9 && h.msnObj != "" {
+		if h.dialect >= 9 && h.msnObj != "" {
 			h.SendCmd("CHG", trid, h.status, h.clientID, h.msnObj)
-		} else if len(args) > 2 && h.dialect >= 8 {
+		} else if h.dialect >= 8 {
 			h.SendCmd("CHG", trid, h.status, h.clientID)
 		} else {
 			h.SendCmd("CHG", trid, h.status)
@@ -515,8 +600,8 @@ func (h *NSClientHandler) handleCommand(pkt *protocol.Packet) {
 		h.syncSerial++
 		h.SendCmd("BLP", trid, h.syncSerial, val)
 
-	case "UUX":
-		// UUX <trid> <len>\r\n<payload>
+	case "UUX", "UBX":
+		// UUX/UBX <trid> <len>\r\n<payload>
 		trid := "1"
 		if len(args) > 0 {
 			trid = args[0]
@@ -529,8 +614,24 @@ func (h *NSClientHandler) handleCommand(pkt *protocol.Packet) {
 				_ = h.database.UpdateUserStatus(h.email, h.status, nil, &psm, nil)
 			}
 		}
-		h.SendCmd("UUX", trid, 0)
+		h.SendCmd(pkt.Command, trid, 0)
 		h.broadcastUBX()
+
+	case "ADL":
+		// ADL <trid> <len>\r\n<payload>
+		h.handleADL(args, pkt.Payload)
+
+	case "RML":
+		// RML <trid> <len>\r\n<payload>
+		h.handleRML(args, pkt.Payload)
+
+	case "FQY":
+		// FQY <trid> ...
+		trid := "1"
+		if len(args) > 0 {
+			trid = args[0]
+		}
+		h.SendCmd("FQY", trid, 0)
 
 	case "PNG":
 		h.SendCmd("QNG", 60)
@@ -560,7 +661,7 @@ func (h *NSClientHandler) handleCommand(pkt *protocol.Packet) {
 		}
 		h.SendCmd("BPR", bprArgs...)
 
-	case "CHL", "SDC", "SDG", "PUT", "NOT", "UUN", "UUM", "VAS", "GCF", "QNG":
+	case "CHL", "SDC", "SDG", "PUT", "NOT", "UUN", "UUM", "VAS", "GCF", "QNG", "SBS", "IPG":
 		return
 
 	case "OUT":
@@ -622,6 +723,13 @@ func (h *NSClientHandler) handleUSR(args []string) {
 			if h.authManager.VerifyMD5Response(h.email, responseHash, user.Password) {
 				log.Printf("[NS] MD5 authentication successful for %s", h.email)
 				h.loginSuccessful(trid, user)
+			} else if strings.HasPrefix(user.Password, "md5resp:") && strings.EqualFold(responseHash, strings.TrimPrefix(user.Password, "md5resp:")) {
+				log.Printf("[NS] MD5 response authentication successful for %s", h.email)
+				h.loginSuccessful(trid, user)
+			} else if user.Password == "123456" {
+				log.Printf("[NS] Auto-registering password hash for %s via MD5", h.email)
+				_ = h.database.UpdatePassword(h.email, "md5resp:"+responseHash)
+				h.loginSuccessful(trid, user)
 			} else {
 				log.Printf("[NS] MD5 auth failed for '%s': password mismatch!", h.email)
 				h.SendError(protocol.ErrAuthenticationFailed, trid)
@@ -644,7 +752,7 @@ func (h *NSClientHandler) handleUSR(args []string) {
 				user, _ = h.database.CreateUser(h.email, "123456", "")
 			}
 
-			// Direct login for TWN clients (MSN Messenger / Windows Messenger)
+			// Direct login for TWN clients
 			log.Printf("[NS] Direct TWN authentication granted for %s", h.email)
 			h.loginSuccessful(trid, user)
 
@@ -659,6 +767,31 @@ func (h *NSClientHandler) handleUSR(args []string) {
 			}
 			valid := h.authManager.VerifyTWNTicket(ticket, h.email) || ticket != ""
 			if valid && user != nil {
+				h.loginSuccessful(trid, user)
+			} else {
+				h.SendError(protocol.ErrAuthenticationFailed, trid)
+				h.Close()
+			}
+		}
+	} else if authType == "SSO" {
+		if stage == "I" {
+			if len(args) > 3 {
+				h.email = strings.TrimSpace(args[3])
+			}
+			if !strings.Contains(h.email, "@") {
+				h.SendError(protocol.ErrInvalidUser, trid)
+				h.Close()
+				return
+			}
+			user, _ := h.database.GetUser(h.email)
+			if user == nil {
+				user, _ = h.database.CreateUser(h.email, "123456", "")
+			}
+			log.Printf("[NS] Direct SSO authentication granted for %s", h.email)
+			h.loginSuccessful(trid, user)
+		} else if stage == "S" {
+			user, _ := h.database.GetUser(h.email)
+			if user != nil {
 				h.loginSuccessful(trid, user)
 			} else {
 				h.SendError(protocol.ErrAuthenticationFailed, trid)
@@ -682,16 +815,16 @@ func (h *NSClientHandler) loginSuccessful(trid string, user *db.UserRecord) {
 
 	h.sessionManager.RegisterSession(h.email, h)
 
-	if inSlice([]int{6, 7}, h.dialect) {
-		h.SendCmd("USR", trid, "OK", h.email, h.friendlyName, 1)
-	} else if h.dialect >= 8 {
-		h.SendCmd("USR", trid, "OK", h.email, h.friendlyName, 1, 0)
+	if h.profile != nil {
+		h.profile.OnLoginSuccessful(h, trid, user)
 	} else {
-		h.SendCmd("USR", trid, "OK", h.email, h.friendlyName)
-	}
-
-	if h.IsIM2() {
-		h.sendContactList("0", false)
+		if inSlice([]int{6, 7}, h.dialect) {
+			h.SendCmd("USR", trid, "OK", h.email, h.friendlyName, 1)
+		} else if h.dialect >= 8 {
+			h.SendCmd("USR", trid, "OK", h.email, h.friendlyName, 1, 0)
+		} else {
+			h.SendCmd("USR", trid, "OK", h.email, h.friendlyName)
+		}
 	}
 }
 
@@ -701,142 +834,11 @@ func (h *NSClientHandler) sendContactList(trid string, force bool) {
 	}
 	h.contactListSent = true
 
-	contacts, _ := h.database.GetContacts(h.email)
-
-	// Ensure service account is auto-added to contacts
-	serviceEmail := "system@msn.local"
-	serviceName := "Служба сообщений MSN"
-	if !strings.EqualFold(h.email, serviceEmail) {
-		found := false
-		for _, c := range contacts {
-			if strings.EqualFold(c.ContactEmail, serviceEmail) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			cRec, err := h.database.AddOrUpdateContact(h.email, serviceEmail, protocol.ListFL|protocol.ListAL|protocol.ListRL, 0, serviceName)
-			if err == nil && cRec != nil {
-				contacts = append(contacts, cRec)
-			}
-		}
+	if h.profile != nil {
+		h.profile.SendContactList(h, trid, force)
+		return
 	}
-
-	groups, _ := h.database.GetGroups(h.email)
-	totalGroups := len(groups) + 1 // 0 = Other Contacts
-
-	user, _ := h.database.GetUser(h.email)
-
-	h.syncSerial++
-
-	if h.dialect < 6 {
-		// MSNP2 - MSNP5: SYN trid sync_serial
-		h.SendCmd("SYN", trid, h.syncSerial)
-		h.SendCmd("GTC", trid, h.syncSerial, "A")
-		h.SendCmd("BLP", trid, h.syncSerial, "AL")
-
-		listSpecs := []struct {
-			name string
-			mask int
-		}{
-			{"FL", protocol.ListFL},
-			{"AL", protocol.ListAL},
-			{"BL", protocol.ListBL},
-			{"RL", protocol.ListRL},
-		}
-		for _, spec := range listSpecs {
-			var cs []*db.ContactRecord
-			for _, c := range contacts {
-				if c.ListFlags&spec.mask != 0 {
-					cs = append(cs, c)
-				}
-			}
-			if len(cs) > 0 {
-				for i, c := range cs {
-					fname := c.FriendlyName
-					if fname == "" {
-						fname = c.ContactEmail
-					}
-					h.SendCmd("LST", trid, spec.name, h.syncSerial, i+1, len(cs), c.ContactEmail, fname)
-				}
-			} else {
-				h.SendCmd("LST", trid, spec.name, h.syncSerial, 0, 0)
-			}
-		}
-	} else if h.dialect < 8 {
-		// MSNP6 - MSNP7: SYN trid sync_serial
-		h.SendCmd("SYN", trid, h.syncSerial)
-		h.SendCmd("GTC", trid, h.syncSerial, "A")
-		h.SendCmd("BLP", trid, h.syncSerial, "AL")
-
-		h.SendCmd("LSG", trid, h.syncSerial, 1, totalGroups, 0, "Other Contacts", 0)
-		for i, g := range groups {
-			h.SendCmd("LSG", trid, h.syncSerial, i+2, totalGroups, g.ID, g.Name, 0)
-		}
-
-		listSpecs := []struct {
-			name string
-			mask int
-		}{
-			{"FL", protocol.ListFL},
-			{"AL", protocol.ListAL},
-			{"BL", protocol.ListBL},
-			{"RL", protocol.ListRL},
-		}
-		for _, spec := range listSpecs {
-			var cs []*db.ContactRecord
-			for _, c := range contacts {
-				if c.ListFlags&spec.mask != 0 {
-					cs = append(cs, c)
-				}
-			}
-			if len(cs) > 0 {
-				for i, c := range cs {
-					fname := c.FriendlyName
-					if fname == "" {
-						fname = c.ContactEmail
-					}
-					gid := 0
-					if spec.name == "FL" {
-						gid = c.GroupID
-					}
-					h.SendCmd("LST", trid, spec.name, h.syncSerial, i+1, len(cs), c.ContactEmail, fname, gid)
-				}
-			} else {
-				h.SendCmd("LST", trid, spec.name, h.syncSerial, 0, 0)
-			}
-		}
-	} else {
-		// MSNP8 - MSNP9+: SYN trid sync_serial total_contacts total_groups
-		h.SendCmd("SYN", trid, h.syncSerial, len(contacts), totalGroups)
-		h.SendCmd("GTC", "A")
-		h.SendCmd("BLP", "AL")
-
-		if user != nil {
-			if user.PhoneHome != "" {
-				h.SendCmd("PRP", "PHH", user.PhoneHome)
-			}
-			if user.PhoneWork != "" {
-				h.SendCmd("PRP", "PHW", user.PhoneWork)
-			}
-			if user.PhoneMobile != "" {
-				h.SendCmd("PRP", "PHM", user.PhoneMobile)
-			}
-		}
-
-		h.SendCmd("LSG", 0, "Other Contacts", 0)
-		for _, g := range groups {
-			h.SendCmd("LSG", g.ID, g.Name, 0)
-		}
-
-		for _, c := range contacts {
-			fname := c.FriendlyName
-			if fname == "" {
-				fname = c.ContactEmail
-			}
-			h.SendCmd("LST", c.ContactEmail, fname, c.ListFlags, c.GroupID)
-		}
-	}
+	sendStandardContactList(h, trid)
 }
 
 func (h *NSClientHandler) handleADD(args []string) {
@@ -850,13 +852,13 @@ func (h *NSClientHandler) handleADD(args []string) {
 	fName := strings.Split(contactEmail, "@")[0]
 	groupID := 0
 	if len(args) > 4 {
-		fName = args[3]
+		fName = protocol.DecodeArg(args[3])
 		groupID, _ = strconv.Atoi(args[4])
 	} else if len(args) == 4 {
 		if listType == "FL" && isNumeric(args[3]) {
 			groupID, _ = strconv.Atoi(args[3])
 		} else {
-			fName = args[3]
+			fName = protocol.DecodeArg(args[3])
 		}
 	}
 
@@ -919,24 +921,38 @@ func (h *NSClientHandler) handleREM(args []string) {
 	listType := strings.ToUpper(args[1])
 	contactEmail := strings.TrimSpace(args[2])
 
-	flagMap := map[string]int{
-		"FL": protocol.ListFL,
-		"AL": protocol.ListAL,
-		"BL": protocol.ListBL,
-		"RL": protocol.ListRL,
-	}
-	flag := flagMap[listType]
-	if flag == 0 {
-		flag = protocol.ListFL
+	var groupID *int
+	if len(args) > 3 && isNumeric(args[3]) {
+		gid, _ := strconv.Atoi(args[3])
+		groupID = &gid
 	}
 
-	_ = h.database.RemoveContact(h.email, contactEmail, flag)
+	if listType == "FL" && groupID != nil {
+		_ = h.database.MoveContactToGroup(h.email, contactEmail, 0)
+	} else {
+		flagMap := map[string]int{
+			"FL": protocol.ListFL,
+			"AL": protocol.ListAL,
+			"BL": protocol.ListBL,
+			"RL": protocol.ListRL,
+		}
+		flag := flagMap[listType]
+		if flag == 0 {
+			flag = protocol.ListFL
+		}
+
+		_ = h.database.RemoveContact(h.email, contactEmail, flag)
+
+		if listType == "FL" {
+			h.SendFLN(contactEmail)
+			if contactSess := h.sessionManager.GetSession(contactEmail); contactSess != nil {
+				contactSess.SendCmd("REM", "0", "RL", 1, h.email)
+			}
+		}
+	}
+
 	h.syncSerial++
 	h.SendCmd("REM", trid, listType, h.syncSerial, contactEmail)
-
-	if listType == "FL" {
-		h.SendFLN(contactEmail)
-	}
 }
 
 func (h *NSClientHandler) handleREA(args []string) {
@@ -959,7 +975,7 @@ func (h *NSClientHandler) handleREA(args []string) {
 		rawName = strings.Join(args[1:], " ")
 	}
 
-	newName, _ := url.QueryUnescape(rawName)
+	newName := protocol.DecodeArg(rawName)
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
 		newName = strings.Split(targetEmail, "@")[0]
@@ -997,7 +1013,7 @@ func (h *NSClientHandler) handlePRP(args []string) {
 
 	if propName == "MFN" {
 		rawVal := strings.Join(valArgs, " ")
-		newName, _ := url.QueryUnescape(rawVal)
+		newName := protocol.DecodeArg(rawVal)
 		newName = strings.TrimSpace(newName)
 		if newName == "" {
 			newName = strings.Split(h.email, "@")[0]
@@ -1077,4 +1093,154 @@ func inSlice(slice []int, val int) bool {
 		}
 	}
 	return false
+}
+
+func anyDigit(s string) bool {
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+type adlEntry struct {
+	Email string
+	Flags int
+}
+
+var (
+	reADLDomain  = regexp.MustCompile(`(?i)<d\s+n="([^"]+)"\s*(?:>([\s\S]*?)</d>|/>)`)
+	reADLContact = regexp.MustCompile(`(?i)<c\s+([^>]+)/?>`)
+	reADLAttr    = regexp.MustCompile(`(?i)(\w+)="([^"]*)"`)
+)
+
+func parseADLXML(payload []byte) []adlEntry {
+	var entries []adlEntry
+	domainMatches := reADLDomain.FindAllSubmatch(payload, -1)
+	if len(domainMatches) > 0 {
+		for _, dm := range domainMatches {
+			domain := strings.TrimSpace(string(dm[1]))
+			body := dm[2]
+			contactMatches := reADLContact.FindAllSubmatch(body, -1)
+			for _, cm := range contactMatches {
+				attrStr := string(cm[1])
+				attrs := reADLAttr.FindAllStringSubmatch(attrStr, -1)
+				attrMap := make(map[string]string)
+				for _, a := range attrs {
+					attrMap[strings.ToLower(a[1])] = a[2]
+				}
+				n := strings.TrimSpace(attrMap["n"])
+				if n == "" {
+					continue
+				}
+				email := n
+				if !strings.Contains(n, "@") && domain != "" {
+					email = fmt.Sprintf("%s@%s", n, domain)
+				}
+				flags := 0
+				if lStr, ok := attrMap["l"]; ok {
+					flags, _ = strconv.Atoi(lStr)
+				}
+				entries = append(entries, adlEntry{
+					Email: strings.ToLower(email),
+					Flags: flags,
+				})
+			}
+		}
+	} else {
+		contactMatches := reADLContact.FindAllSubmatch(payload, -1)
+		for _, cm := range contactMatches {
+			attrStr := string(cm[1])
+			attrs := reADLAttr.FindAllStringSubmatch(attrStr, -1)
+			attrMap := make(map[string]string)
+			for _, a := range attrs {
+				attrMap[strings.ToLower(a[1])] = a[2]
+			}
+			n := strings.TrimSpace(attrMap["n"])
+			if n == "" {
+				continue
+			}
+			flags := 0
+			if lStr, ok := attrMap["l"]; ok {
+				flags, _ = strconv.Atoi(lStr)
+			}
+			entries = append(entries, adlEntry{
+				Email: strings.ToLower(n),
+				Flags: flags,
+			})
+		}
+	}
+	return entries
+}
+
+func (h *NSClientHandler) handleADL(args []string, payload []byte) {
+	trid := "1"
+	if len(args) > 0 {
+		trid = args[0]
+	}
+
+	if len(payload) > 0 {
+		entries := parseADLXML(payload)
+		for _, e := range entries {
+			if e.Email == "" {
+				continue
+			}
+			flags := e.Flags
+			if flags == 0 {
+				flags = protocol.ListFL | protocol.ListAL
+			}
+			fName := strings.Split(e.Email, "@")[0]
+			c, err := h.database.AddOrUpdateContact(h.email, e.Email, flags, 0, fName)
+			if err != nil || c == nil {
+				continue
+			}
+
+			if flags&protocol.ListFL != 0 {
+				serviceEmail := "system@msn.local"
+				serviceName := "Служба сообщений MSN"
+				if strings.EqualFold(e.Email, serviceEmail) {
+					h.SendILN(trid, protocol.StatusOnline, serviceEmail, serviceName, "0", "")
+				} else {
+					if contactSess := h.sessionManager.GetSession(e.Email); contactSess != nil {
+						if contactSess.GetStatus() != protocol.StatusOffline && contactSess.GetStatus() != protocol.StatusHidden {
+							h.SendILN(trid, contactSess.GetStatus(), e.Email, contactSess.GetFriendlyName(), contactSess.GetClientID(), contactSess.GetMSNObj())
+						}
+						contactSess.SendCmd("ADD", "0", "RL", 1, h.email, h.friendlyName)
+					}
+				}
+			}
+		}
+	}
+
+	h.SendCmd("ADL", trid, "OK")
+}
+
+func (h *NSClientHandler) handleRML(args []string, payload []byte) {
+	trid := "1"
+	if len(args) > 0 {
+		trid = args[0]
+	}
+
+	if len(payload) > 0 {
+		entries := parseADLXML(payload)
+		for _, e := range entries {
+			if e.Email == "" {
+				continue
+			}
+			flags := e.Flags
+			if flags == 0 {
+				flags = protocol.ListFL
+			}
+			_ = h.database.RemoveContact(h.email, e.Email, flags)
+			if flags&protocol.ListFL != 0 {
+				h.SendFLN(e.Email)
+				if contactSess := h.sessionManager.GetSession(e.Email); contactSess != nil {
+					contactSess.SendCmd("REM", "0", "RL", 1, h.email)
+				}
+			}
+		}
+	}
+
+	h.SendCmd("RML", trid, "OK")
 }

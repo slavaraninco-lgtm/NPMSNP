@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -56,8 +55,12 @@ func (a *AuthManager) CreateMD5Challenge(email string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	n, _ := rand.Int(rand.Reader, big.NewInt(900000000))
-	challenge := fmt.Sprintf("%d", n.Int64()+100000000)
+	h := md5.New()
+	h.Write([]byte(a.secretKey + ":" + strings.ToLower(email) + ":msnp_salt_2026"))
+	sum := h.Sum(nil)
+	val := uint32(sum[0])<<24 | uint32(sum[1])<<16 | uint32(sum[2])<<8 | uint32(sum[3])
+	challenge := fmt.Sprintf("%d", val%900000000+100000000)
+
 	a.md5Challenges[strings.ToLower(email)] = md5Challenge{
 		Challenge: challenge,
 		CreatedAt: time.Now(),

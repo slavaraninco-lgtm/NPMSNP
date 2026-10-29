@@ -165,7 +165,7 @@ class SBClientHandler:
         else:
             logger.warning(f"Unhandled SB command: {cmd} args={args}")
             trid = args[0] if args else "0"
-            if cmd in ("CHL", "PNG", "QNG", "NOT", "UUN", "UUM"):
+            if cmd in ("CHL", "PNG", "QNG", "NOT", "UUN", "UUM", "QRY", "VAS", "SDC", "SDG", "PUT"):
                 return
             self.send_error(MSNPError.SYNTAX_ERROR, trid)
 
@@ -192,9 +192,17 @@ class SBClientHandler:
     async def _cmd_cvr(self, args: List[str], payload: Optional[bytes]) -> None:
         trid = args[0] if args else "1"
         ver = "6.0.0602"
+        for a in args[5:]:
+            if "." in a and any(c.isdigit() for c in a):
+                ver = a
+                break
         host = self.get_effective_host()
         url = f"http://{host}:{self.http_port}/"
         self.send_cmd("CVR", trid, ver, ver, ver, url, url)
+
+    async def _cmd_qry(self, args: List[str], payload: Optional[bytes]) -> None:
+        trid = args[0] if args else "1"
+        self.send_cmd("QRY", trid)
 
     async def _cmd_png(self, args: List[str], payload: Optional[bytes]) -> None:
         self.send_cmd("QNG", 60)

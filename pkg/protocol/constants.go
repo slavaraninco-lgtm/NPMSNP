@@ -64,9 +64,12 @@ var SupportedDialects = map[string]int{
 	"MSNP10": 10,
 	"MSNP11": 11,
 	"MSNP12": 12,
+	"MSNP13": 13,
+	"MSNP14": 14,
+	"MSNP15": 15,
 }
 
 var OrderedDialects = []string{
-	"MSNP12", "MSNP11", "MSNP10", "MSNP9", "MSNP8", "MSNP7", "MSNP6", "MSNP5", "MSNP4", "MSNP3", "MSNP2",
+	"MSNP15", "MSNP14", "MSNP13", "MSNP12", "MSNP11", "MSNP10", "MSNP9", "MSNP8", "MSNP7", "MSNP6", "MSNP5", "MSNP4", "MSNP3", "MSNP2",
 }
 

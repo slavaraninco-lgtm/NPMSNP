@@ -16,11 +16,14 @@ class ProtocolVersion(str, Enum):
     MSNP10 = "MSNP10"
     MSNP11 = "MSNP11"
     MSNP12 = "MSNP12"
+    MSNP13 = "MSNP13"
+    MSNP14 = "MSNP14"
+    MSNP15 = "MSNP15"
 
 
 SUPPORTED_DIALECTS = [
-    "MSNP9", "MSNP8", "MSNP10", "MSNP11", "MSNP12",
-    "MSNP7", "MSNP6", "MSNP5", "MSNP4", "MSNP3", "MSNP2"
+    "MSNP15", "MSNP14", "MSNP13", "MSNP12", "MSNP11", "MSNP10",
+    "MSNP9", "MSNP8", "MSNP7", "MSNP6", "MSNP5", "MSNP4", "MSNP3", "MSNP2"
 ]
 
 
@@ -87,5 +90,5 @@ class MSNPError:
 
 # Commands whose last argument is the byte length of a following payload
 PAYLOAD_COMMANDS = {
-    "MSG", "NOT", "UUX", "ADL", "RML", "SDG", "SDC", "PUT", "QRY", "UUN", "UUM", "VAS"
+    "MSG", "NOT", "UUX", "UBX", "ADL", "RML", "SDG", "SDC", "PUT", "QRY", "UUN", "UUM", "VAS", "FQY"
 }

@@ -148,7 +148,7 @@ func (d *Database) migratePlainPasswords() {
 	}
 }
 
-// EnsureServiceAccount creates or updates the default system service account.
+// EnsureServiceAccount creates or updates the default system service account and heals corrupt entries.
 func (d *Database) EnsureServiceAccount(email, name string) error {
 	email = strings.TrimSpace(email)
 	name = strings.TrimSpace(name)
@@ -158,11 +158,19 @@ func (d *Database) EnsureServiceAccount(email, name string) error {
 	}
 	if user == nil {
 		_, err = d.CreateUser(email, "system_service_internal_password", name)
-		return err
+		if err != nil {
+			return err
+		}
+	} else if user.FriendlyName != name {
+		_ = d.UpdateFriendlyName(email, name)
 	}
-	if user.FriendlyName != name {
-		return d.UpdateFriendlyName(email, name)
-	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// Fix corrupted group names (e.g. \ufffd -> Пользователи)
+	_, _ = d.db.Exec("UPDATE groups SET name = 'Пользователи' WHERE name LIKE '%\ufffd%' OR name = '?' OR name = '??';")
+	// Fix corrupted service account entries in contacts table
+	_, _ = d.db.Exec("UPDATE contacts SET friendly_name = ? WHERE contact_email = ? COLLATE NOCASE;", name, email)
 	return nil
 }
 
@@ -666,6 +674,16 @@ func (d *Database) UpdateContactFriendlyName(userEmail, contactEmail, friendlyNa
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	_, err := d.db.Exec("UPDATE contacts SET friendly_name = ? WHERE user_email = ? COLLATE NOCASE AND contact_email = ? COLLATE NOCASE;", friendlyName, userEmail, contactEmail)
+	return err
+}
+
+func (d *Database) MoveContactToGroup(userEmail, contactEmail string, groupID int) error {
+	userEmail = strings.TrimSpace(userEmail)
+	contactEmail = strings.TrimSpace(contactEmail)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, err := d.db.Exec("UPDATE contacts SET group_id = ? WHERE user_email = ? COLLATE NOCASE AND contact_email = ? COLLATE NOCASE;", groupID, userEmail, contactEmail)
 	return err
 }
 

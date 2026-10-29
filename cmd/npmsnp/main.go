@@ -60,6 +60,14 @@ func main() {
 		cfg.AutoRegisterUnknownUsers,
 		cfg.AdminPassword,
 	)
+	httpServer.SetNSHandlerFactory(func(conn net.Conn) func() {
+		h := handlers.NewNSClientHandler(conn, database, authMgr, sessionMgr, sbMgr, *externalHostFlag, *nsPortFlag, *sbPortFlag, *httpPortFlag)
+		return h.Run
+	})
+	httpServer.SetSBHandlerFactory(func(conn net.Conn) func() {
+		h := handlers.NewSBClientHandler(conn, database, authMgr, sessionMgr, sbMgr, *externalHostFlag, *sbPortFlag, *httpPortFlag)
+		return h.Run
+	})
 	if err := httpServer.Start(); err != nil {
 		log.Fatalf("[FATAL] Failed to start HTTP server on %s:%d: %v", *hostFlag, *httpPortFlag, err)
 	}

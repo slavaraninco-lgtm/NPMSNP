@@ -30,6 +30,7 @@ type SBClientHandler struct {
 	authenticated bool
 	email         string
 	friendlyName  string
+	clientApp     string
 	sessionID     int
 	room          *services.SwitchboardRoom
 	closed        bool
@@ -62,6 +63,18 @@ func (h *SBClientHandler) GetFriendlyName() string {
 }
 
 func (h *SBClientHandler) IsANSI() bool {
+	if h.clientApp != "" {
+		app := strings.ToLower(h.clientApp)
+		if strings.Contains(app, "astra") || strings.Contains(app, "trillian 4") || strings.Contains(app, "trillian 5") ||
+			strings.Contains(app, "trillian/4") || strings.Contains(app, "trillian/5") || strings.Contains(app, "trillian.4") || strings.Contains(app, "trillian.5") {
+			return false
+		}
+		for _, c := range []string{"trillian", "miranda", "im2", "im 2", "qip", "kopete", "sim", "msnmsgr 5.", "msnmsgr 4."} {
+			if strings.Contains(app, c) {
+				return true
+			}
+		}
+	}
 	if h.email != "" {
 		nsSess := h.sessionManager.GetSession(h.email)
 		if nsSess != nil {
@@ -223,9 +236,21 @@ func (h *SBClientHandler) handleCommand(pkt *protocol.Packet) {
 		if len(args) > 0 {
 			trid = args[0]
 		}
+		if len(args) > 5 {
+			h.clientApp = strings.ToLower(strings.Join(args, " "))
+		}
+		clientVer := "6.0.0602"
+		if len(args) > 5 {
+			for _, a := range args[5:] {
+				if strings.Contains(a, ".") && anyDigit(a) {
+					clientVer = a
+					break
+				}
+			}
+		}
 		host := h.GetEffectiveHost()
 		url := fmt.Sprintf("http://%s:%d/", host, h.httpPort)
-		h.SendCmd("CVR", trid, "6.0.0602", "6.0.0602", "6.0.0602", url, url)
+		h.SendCmd("CVR", trid, clientVer, clientVer, clientVer, url, url)
 
 	case "USR":
 		// Caller authentication: USR <trid> <email> <cookie>
@@ -477,7 +502,17 @@ func (h *SBClientHandler) handleCommand(pkt *protocol.Packet) {
 	case "OUT":
 		h.Close()
 
-	case "CHL", "PNG", "QNG", "QRY", "VAS", "SDC", "SDG", "PUT":
+	case "PNG":
+		h.SendCmd("QNG", 60)
+
+	case "QRY":
+		trid := "1"
+		if len(args) > 0 {
+			trid = args[0]
+		}
+		h.SendCmd("QRY", trid)
+
+	case "CHL", "QNG", "VAS", "SDC", "SDG", "PUT":
 		return
 	}
 }

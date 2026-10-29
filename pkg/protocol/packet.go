@@ -15,7 +15,26 @@ type Packet struct {
 	Payload []byte
 }
 
-// Commands that always carry a payload when payload_len is given
+// IsPayloadCommand returns true if the command carries a payload with the given number of arguments.
+func IsPayloadCommand(cmd string, numArgs int) bool {
+	switch cmd {
+	case "QRY":
+		// QRY <trid> <product_id> <length>\r\n<payload> (needs at least 3 args)
+		return numArgs >= 3
+	case "MSG":
+		// MSG <trid> <ack_type> <length>\r\n<payload> (needs at least 2 args)
+		return numArgs >= 2
+	case "UUX", "UBX", "IPG", "GCF", "ADL", "RML", "SDG", "SDC", "PUT", "VAS", "UUN", "UUM", "FQY":
+		// Needs at least 2 args: e.g. <trid> <length>
+		return numArgs >= 2
+	case "NOT":
+		return numArgs >= 1
+	default:
+		return false
+	}
+}
+
+// Commands that can carry a payload when payload_len is given
 var payloadCommands = map[string]bool{
 	"MSG": true,
 	"NOT": true,
@@ -32,6 +51,7 @@ var payloadCommands = map[string]bool{
 	"UUN": true,
 	"UUM": true,
 	"VAS": true,
+	"FQY": true,
 }
 
 // ReadPacket reads one MSNP packet from a buffered reader.
@@ -53,7 +73,7 @@ func ReadPacket(r *bufio.Reader) (*Packet, error) {
 	var payload []byte
 	var args []string
 
-	if payloadCommands[cmd] && len(rawArgs) > 0 {
+	if IsPayloadCommand(cmd, len(rawArgs)) {
 		lastArgStr := string(rawArgs[len(rawArgs)-1])
 		if length, err := strconv.Atoi(lastArgStr); err == nil && length >= 0 {
 			payload = make([]byte, length)
